@@ -92,28 +92,12 @@ See `docs/DESIGN.md` §7.
   several later 8.0.x patches (e.g. `getqflist({'lines':…})`, `sign_place()`)
   are absent. Do not assume "8.0" means the latest 8.0.x.
 
-### Manual verification (Tier 1 diagnostics)
+### Manual / acceptance testing
 
-Run real Vim 8.0 and observe — do not claim success you haven't seen:
-
-1. `~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/tier1/broken.c`
-2. Confirm the banner / `:version` says **8.0**.
-3. Diagnostics auto-run on open (the ftplugin calls `fakeide#enable()`). Expect:
-   - a `W>` sign on the `#warning` line (6) and an `E>` sign on the
-     `return undeclared_sym;` line (8);
-   - `:lopen` lists both (1 warning + 1 error); `]d` / `[d` jump between them.
-4. Move the cursor onto line 8 — the error message echoes on the command line
-   (our 8.0 "hover" substitute).
-5. **Live/unsaved path:** in insert mode add a line such as `int x = nope;`,
-   leave insert, run `:FakeIdeCheck`. A new error sign + loclist entry appears
-   **without saving the file** — this proves the buffer is fed to clang on stdin.
-6. `:FakeIdeClear` removes the signs + location list. `:FakeIdeStatus` prints the
-   resolved flags; `:FakeIdeFlags` should include `-Wall` (from the fixture's
-   `.fakeide`). `:FakeIdeReloadFlags` clears the flag cache.
-
-Exact diagnostics command (also echoed in `docs/DESIGN.md` §5.3):
-`clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics -x c <flags> -I<file dir> -`
-with the buffer piped on stdin.
+The by-hand acceptance checklist (for humans, with expected results to tick off)
+lives in **`docs/TESTING.md`**. Run it in real Vim 8.0 before accepting a tier
+as done, and **keep it current** — add a checklist section for each new tier as
+you build it, the same way you update `PROGRESS.md` and `DESIGN.md`.
 
 ## 6. Working agreement between agents
 
@@ -132,6 +116,8 @@ with the buffer piped on stdin.
     you did, key decisions, exact commands run, and what's next.
   - If the architecture, file layout, or build steps changed, update
     **`docs/DESIGN.md`** to match — never let it drift from the code.
+  - If you shipped a user-visible feature, add/update its by-hand acceptance
+    steps in **`docs/TESTING.md`** (§5).
   - If a project rule or constraint changed, update this file.
   A task is not "finished" until the relevant docs reflect reality.
 - **Leave a trail.** Also note what changed and why in your turn summary so the
