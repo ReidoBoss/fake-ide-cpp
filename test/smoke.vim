@@ -59,6 +59,28 @@ while !g:done2 && s:w2 < 300
 endwhile
 call Check('job-stdin', get(g:res2, 'out', []) == ['alpha', 'beta'], 'out=' . string(get(g:res2, 'out', [])))
 
+" --- stderr-only capture (regression guard) ---
+" A process that writes ONLY to stderr (empty stdout) must not lose its output.
+" job.vim merges stderr into stdout by default, so it arrives in result.out.
+" This is exactly clang -fsyntax-only's shape (diagnostics on stderr) — Tier 1
+" saw zero diagnostics until this was fixed. See docs/DESIGN.md §5.2.
+let g:done_e = 0
+let g:res_e = {}
+function! OnDoneE(r) abort
+  let g:done_e = 1
+  let g:res_e = a:r
+endfunction
+call fakeide#job#run(['/bin/sh', '-c', 'echo only-stderr 1>&2'],
+      \ {'on_done': function('OnDoneE'), 'timeout': 5000})
+let s:we = 0
+while !g:done_e && s:we < 300
+  sleep 10m
+  let s:we += 1
+endwhile
+call Check('job-stderr-captured',
+      \ index(get(g:res_e, 'out', []) + get(g:res_e, 'err', []), 'only-stderr') >= 0,
+      \ 'out=' . string(get(g:res_e, 'out', [])) . ' err=' . string(get(g:res_e, 'err', [])))
+
 " --- real clang invocation on the valid fixture (Tier 1 foundation) ---
 let g:done3 = 0
 let g:res3 = {}

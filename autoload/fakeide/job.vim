@@ -12,6 +12,16 @@
 "       stdin   : List of lines OR a String fed to the process's stdin.
 "       on_done : Funcref(result). result = {code, out, err, tag}; out/err Lists.
 "       timeout : ms. Kill the run if it exceeds this (0 = no timeout).
+"       merge_stderr : default 1. Merge the process's stderr into stdout (all
+"                 lines arrive in result.out; result.err stays empty). Set to 0
+"                 to keep them separate (result.err populated via a second pipe).
+"
+" Why merge stderr by default: with two separate pipes, a process that writes
+" ONLY to stderr (empty stdout) EOFs stdout instantly; close_cb then fires and
+" we finalize before the stderr data is delivered, LOSING it. clang
+" -fsyntax-only is exactly this case (diagnostics go to stderr, stdout is
+" empty). Merging gives a single stream with no cross-part race. Verified on
+" Vim 8.0: separate streams drop stderr-only output; merged does not.
 "   fakeide#job#stop(tag)        -> cancel the run registered under tag.
 "   fakeide#job#is_running(tag)  -> 0/1.
 "
@@ -154,12 +164,18 @@ function! fakeide#job#run(cmd, opts) abort
 
   let l:job_opts = {
         \ 'out_mode': 'nl',
-        \ 'err_mode': 'nl',
         \ 'out_cb':   function('s:on_out',   [l:run]),
-        \ 'err_cb':   function('s:on_err',   [l:run]),
         \ 'exit_cb':  function('s:on_exit',  [l:run]),
         \ 'close_cb': function('s:on_close', [l:run]),
         \ }
+  " Merge stderr into stdout by default (see header: avoids losing stderr-only
+  " output to a close_cb race). Opt out with merge_stderr=0 for a separate pipe.
+  if get(a:opts, 'merge_stderr', 1)
+    let l:job_opts.err_io = 'out'
+  else
+    let l:job_opts.err_mode = 'nl'
+    let l:job_opts.err_cb   = function('s:on_err', [l:run])
+  endif
   let l:job_opts.in_io = has_key(a:opts, 'stdin') ? 'pipe' : 'null'
 
   let l:run.job = job_start(a:cmd, l:job_opts)
