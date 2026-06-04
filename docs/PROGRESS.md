@@ -5,6 +5,65 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — Tier 2 complete: semantic completion (omnifunc → clang)
+
+**Done (verified against real Vim 8.0.0000 — 16/16 new checks PASS, 40/40 total
+via `sh test/run.sh`; plus a real `i_CTRL-X_CTRL-O` round-trip observed):**
+- `autoload/fakeide/complete.vim` — `omnifunc=fakeide#complete#omni` driving
+  `clang -Xclang -code-completion-at=-:L:C -` over the buffer on **stdin** (unsaved
+  edits reflected, same design as Tier 1 diagnostics):
+  - **Two-call contract.** `findstart` scans back over `\k` chars for the partial
+    word **and snapshots `[line, col]`**; the candidates call reuses that snapshot
+    (Vim can move the cursor between the two calls — caught this and fixed it).
+  - Points clang at the **cursor** (end of the partial) so **clang filters by the
+    typed prefix** — critical to avoid dumping 1000s of entries for `std::`.
+  - **Parses `COMPLETION:` lines** (stdout): splits name/sig on the first ` : `,
+    skips `(Inaccessible)`/`(Hidden)`, extracts return type `[#…#]`, unwraps
+    `<#param#>` / `{#opt#}` / trailing `[# const#]`. Emits Vim dicts with
+    `word`/`menu`(rettype)/`info`(signature)/`kind` (`f`/`v`/`t`/`d`); dedups by
+    word+menu (keeps distinct overloads); caps at `g:fakeide_complete_max` (200).
+  - Wired via `fakeide#complete#enable()` ← `fakeide#enable()`. Opt-in auto-trigger
+    maps for `.`/`->`/`::` (`g:fakeide_complete_auto`, default **off**).
+- `plugin/fakeide.vim`: config defaults (`fakeide_complete_auto`/`_timeout`/`_max`)
+  + `:FakeIdeComplete`.
+- `test/fixtures/tier2/{.fakeide,sample.cpp}`, `test/complete.vim`; `test/run.sh`
+  now runs `smoke`, `diag`, **`complete`**.
+
+**Key decision / gotcha — synchronous omnifunc (documented tradeoff):**
+- Vim 8.0's omnifunc/completefunc contract is **synchronous**: the function must
+  *return* the list. 8.0 has **no non-blocking completion API** short of the
+  `complete()` re-trigger hack (flickers). So the omnifunc runs clang through the
+  async `job.vim` (superseding stale jobs by tag `complete:<bufnr>`) but then
+  **waits on a bounded `sleep 10m` poll loop** until `on_done` fires (cap =
+  `g:fakeide_complete_timeout`+500ms). `:sleep` is a point where Vim pumps
+  channel callbacks — verified this works for a real `i_CTRL-X_CTRL-O`, not just
+  direct calls. Net: completion briefly **blocks the UI** for the parse, but only
+  on an explicit request, never per-keystroke. This is the documented "no daemon"
+  cost (DESIGN §5.4/§10); auto-trigger is opt-in for that reason. **This bends the
+  "never block the UI" rule** — flagging it: it is unavoidable for a synchronous
+  omnifunc in 8.0. Async `complete()` auto-trigger is noted as future work.
+- **Test/pty gotcha:** ad-hoc `script …` one-offs are flaky here AND need
+  `TERM=xterm` or Vim won't start under the pty. `sh test/run.sh` (which sets it)
+  is the reliable harness. Also: a `call cursor()` *outside* the feedkeys stream
+  doesn't stick for completion — drive navigation *inside* feedkeys
+  (`10G0f.a\<C-x>\<C-o>`) to verify the real path.
+
+**Exact command used (completion):**
+`clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics -x c++ -Xclang -code-completion-at=-:L:C <flags> -I<dir> -`
+(buffer on stdin). Verified at `p.` in `test/fixtures/tier2/sample.cpp`: returns
+`dist/move/operator=/Point/x/y/~Point` with return types + signatures; partial
+`p.di` filters to `dist`; an unsaved struct member appears in the menu.
+
+**How to run:** `sh test/run.sh`  ·  try it:
+`~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/tier2/sample.cpp`, go to the
+`p.x` line, `i` after the `.`, press `CTRL-X CTRL-O` (or `:FakeIdeComplete`).
+
+**Next:** Tier 3 — `goto.vim` (go-to-definition via clang AST dump / vimgrep
+fallback) and `info.vim` (type/signature echo + preview window). PCH support for
+system headers is the highest-leverage completion speedup and still open.
+
+---
+
 ## 2026-06-05 — Tier 1 complete: live diagnostics (signs + loclist + echo)
 
 **Done (verified against real Vim 8.0.0000, 22/22 checks PASS via `sh test/run.sh`):**

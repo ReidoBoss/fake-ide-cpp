@@ -231,45 +231,78 @@ clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
 **Debounce:** `timer_start(g:fakeide_diag_debounce, ...)` (default 300ms),
 restarted on each change so we only compile after the user pauses.
 
-### 5.4 `complete.vim` — semantic completion (Tier 2)
+### 5.4 `complete.vim` — semantic completion (Tier 2) — IMPLEMENTED
 
 This is the hardest and highest-value piece.
 
-**Wiring:** `set omnifunc=fakeide#complete#Omni`. Triggered manually with
-`C-x C-o`, and auto-triggered after `.`, `->`, `::` via an `InsertCharPre` /
-mapping that fires `omnifunc`.
+**Wiring:** `setlocal omnifunc=fakeide#complete#omni` (done in
+`fakeide#complete#enable()`, called from `fakeide#enable()`). Manual trigger is
+the native `i_CTRL-X_CTRL-O`; `:FakeIdeComplete` fires it for you. Auto-trigger
+after `.`, `->`, `::` is available via `<expr>` insert-mode maps but is **opt-in**
+(`g:fakeide_complete_auto`, default 0) — see the blocking note below.
 
-**Command (the key technique):**
+**Command (the key technique, as built):**
 ```
-clang -fsyntax-only -x c++ \
-      -Xclang -code-completion-at=-:LINE:COL \
-      <flags> -
+clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
+      -x <c|c++> -Xclang -code-completion-at=-:LINE:COL \
+      <flags from flags.vim> -I<file dir> -
 ```
 - We pass `-` so clang reads the **translation unit from stdin** → we send the
-  **current unsaved buffer**, so completion reflects what's on screen, not the
-  last save.
-- `-:LINE:COL` tells clang to complete at that position in the stdin input.
+  **current unsaved buffer** (`getline(1,'$')`), so completion reflects what's on
+  screen, not the last save (same stdin design as diagnostics §5.3).
+- `-:LINE:COL` points clang at the **cursor** (the end of the typed partial), so
+  **clang itself filters** candidates by the typed prefix. This is essential:
+  pointing at the start of the word in a `std::` context dumps thousands of
+  entries; pointing at the cursor returns only the matches. `findstart` returns
+  the *start* of the partial so Vim replaces just the typed prefix.
+- `-I<file dir>` mirrors §5.3 (stdin has no directory; keeps quoted `#include`
+  resolution working). `COMPLETION:` lines go to **stdout**; diagnostics go to
+  stderr. We use the default merged stream and filter `^COMPLETION:` lines, so
+  diagnostic noise is ignored and the close_cb race (§5.2) is moot.
 
-**Output parsing:** clang prints lines like:
+**Output parsing (as built):** clang prints two shapes —
 ```
 COMPLETION: push_back : [#void#]push_back(<#const value_type &__x#>)
-COMPLETION: size : [#size_type#]size()
+COMPLETION: x : [#int#]x
+COMPLETION: __func__                         (macro/keyword — no signature)
+COMPLETION: __padding (Inaccessible) : ...   (skipped)
 ```
-We parse: candidate name, return type (`[#...#]`), and argument placeholders
-(`<#...#>`). These map directly to Vim's completion item dict
-(`word`, `menu`, `info`, `kind`) for a rich popup menu.
+We split name from signature on the **first ` : `**, drop `(Inaccessible)` /
+`(Hidden)` candidates, extract the leading return type `[#...#]`, unwrap argument
+placeholders `<#...#>`, optional segments `{#...#}`, and the trailing `[# const#]`.
+Each becomes a Vim completion dict: `word` (the insertable identifier — operator
+names kept whole, template/paren tails stripped), `menu` (return type),
+`info` (full reconstructed signature), `kind` (`f` func / `v` var-or-member /
+`t` type / `d` macro). Results are deduped by word+menu (distinct overloads
+kept) and capped at `g:fakeide_complete_max` (default 200).
 
 **Two-call protocol** (matches Vim's omnifunc contract):
-1. First call (`a:findstart == 1`): return the column where the partial word
-   begins.
-2. Second call: return the list of completion dicts.
+1. First call (`a:findstart == 1`): return the byte column where the partial word
+   begins **and snapshot `[line, col]`** — Vim's two calls must point clang at
+   the same spot, and the cursor can differ between them, so the candidates call
+   reuses the snapshot rather than re-reading `col('.')`.
+2. Second call: run clang, parse, return the list of completion dicts.
+
+**Async-but-synchronous (the key 8.0 constraint, decided in Tier 2):** Vim 8.0's
+`omnifunc`/`completefunc` contract is **synchronous** — the function must *return*
+the candidate list. Vim 8.0 has **no non-blocking completion API** short of the
+`complete()` re-trigger hack (which flickers and fights the native menu). So the
+omnifunc still runs clang through the async wrapper (`job.vim`, tag
+`complete:<bufnr>`, superseding stale jobs) but then **waits on a bounded
+`sleep`-poll loop** (`sleep 10m` until the `on_done` callback fires, capped at
+`g:fakeide_complete_timeout`+500ms). `:sleep` is a point where Vim invokes
+channel/job callbacks, so this works for real `i_CTRL-X_CTRL-O` (verified). The
+consequence: completion **briefly blocks the UI** for the parse duration — but
+only on an explicit completion request, never on every keystroke. This is the
+documented "no daemon" latency cost (§10), and is why auto-trigger is opt-in. A
+future enhancement could move auto-trigger to the async `complete()` path.
 
 **Latency mitigation** (the known weak spot vs. a daemon):
-- Debounce; kill superseded jobs.
+- Kill superseded jobs (a fresh completion supersedes the in-flight one by tag).
+- Cap the candidate count (`g:fakeide_complete_max`).
 - Precompiled headers (PCH) for the project's big/stable system headers
-  (`clang -x c++-header foo.h -o foo.h.pch`, then `-include-pch`), cutting
-  per-keystroke parse time dramatically.
-- Cache the last completion result for the same position.
+  (`clang -x c++-header foo.h -o foo.h.pch`, then `-include-pch`) — **not yet
+  implemented**; the highest-leverage future speedup.
 
 > **Honest expectation:** each completion spawns a clang process that parses the
 > TU. With PCH this is typically 100–400ms on moderate files; large C++ with
@@ -363,8 +396,11 @@ Tiers are independently useful and shippable — Tier 1 alone is worth deploying
    **Decided (Tier 1):** `BufWritePost` always + debounced `CursorHold` (idle)
    on by default; `TextChangedI` (every keystroke) off by default. All toggleable
    via `g:fakeide_diag_on_idle` / `g:fakeide_diag_on_insert` for heavy files.
-2. **Completion compiler:** confirm **clang** is acceptable for completion (gcc
-   can't do `-code-completion-at`); gcc remains fine for diagnostics.
+2. ~~**Completion compiler:** confirm **clang** is acceptable for completion (gcc
+   can't do `-code-completion-at`); gcc remains fine for diagnostics.~~
+   **Decided (Tier 2):** completion uses **clang** (`-Xclang -code-completion-at`).
+   `g:fakeide_compiler` still drives it; pointing it at gcc would disable
+   completion (no such flag) while diagnostics keep working.
 3. **PCH:** are we allowed to write `.pch` cache files into the project/tmp dir?
 4. **Flags source:** does the build already emit `compile_commands.json`? If not,
    we standardize on a `.fakeide` flags file per project.

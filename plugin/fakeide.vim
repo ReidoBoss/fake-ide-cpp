@@ -22,6 +22,13 @@ let g:fakeide_cpp_std     = get(g:, 'fakeide_cpp_std', 'c++17')
 let g:fakeide_extra_flags = get(g:, 'fakeide_extra_flags', [])
 let g:fakeide_compiler    = get(g:, 'fakeide_compiler', 'clang')
 
+" Tier 2 — completion. omnifunc (i_CTRL-X_CTRL-O) is on by default; auto-firing
+" the popup after . -> :: is opt-in because the omnifunc is synchronous and
+" briefly blocks while clang parses (see autoload/fakeide/complete.vim).
+let g:fakeide_complete_auto    = get(g:, 'fakeide_complete_auto', 0)
+let g:fakeide_complete_timeout = get(g:, 'fakeide_complete_timeout', 3000)
+let g:fakeide_complete_max     = get(g:, 'fakeide_complete_max', 200)
+
 " --- Diagnostic signs (used from Tier 1 onward) ---
 if has('signs')
   sign define FakeIdeError   text=E> texthl=ErrorMsg
@@ -34,6 +41,7 @@ command! FakeIdeFlags       echo fakeide#flags#for(expand('%:p'))
 command! FakeIdeStatus      call s:status()
 command! FakeIdeCheck       call fakeide#diag#check()
 command! FakeIdeClear       call fakeide#diag#clear()
+command! FakeIdeComplete    call feedkeys("i\<C-x>\<C-o>", 'n')
 
 function! s:status() abort
   let l:flags = fakeide#flags#for(expand('%:p'))
