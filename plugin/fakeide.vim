@@ -32,6 +32,8 @@ endif
 command! FakeIdeReloadFlags call fakeide#flags#reload() | echo 'fake-ide: flags cache cleared'
 command! FakeIdeFlags       echo fakeide#flags#for(expand('%:p'))
 command! FakeIdeStatus      call s:status()
+command! FakeIdeCheck       call fakeide#diag#check()
+command! FakeIdeClear       call fakeide#diag#clear()
 
 function! s:status() abort
   let l:flags = fakeide#flags#for(expand('%:p'))

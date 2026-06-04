@@ -77,6 +77,44 @@ See `docs/DESIGN.md` §7.
 - When a compiler invocation is involved, paste the exact command line used so
   the other agent (and humans) can reproduce it.
 
+### Automated checks
+
+- `sh test/run.sh` runs every headless check under a real **pty** (it wraps Vim
+  in `script -q /dev/null …`). Job/channel callbacks are NOT pumped by plain
+  `vim -es`, so the pty is mandatory for anything async. The runner aggregates
+  `test/smoke.vim` (Tier 0: job wrapper + flags) and `test/diag.vim` (Tier 1:
+  diagnostics) and exits non-zero on any `FAIL`. Add a new `test/<name>.vim` and
+  a `<name>` entry to the runner's loop for each new tier.
+- Heads-up: ad-hoc `script …` one-off invocations are flaky in some sandboxes
+  (intermittent pty allocation). `sh test/run.sh` is the reliable path; prefer it.
+- Before relying on any Vim function/feature, **probe the actual 8.0 binary**
+  (`exists('*fn')`, a tiny `try/catch` smoke). The pinned build is `8.0.0000`;
+  several later 8.0.x patches (e.g. `getqflist({'lines':…})`, `sign_place()`)
+  are absent. Do not assume "8.0" means the latest 8.0.x.
+
+### Manual verification (Tier 1 diagnostics)
+
+Run real Vim 8.0 and observe — do not claim success you haven't seen:
+
+1. `~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/tier1/broken.c`
+2. Confirm the banner / `:version` says **8.0**.
+3. Diagnostics auto-run on open (the ftplugin calls `fakeide#enable()`). Expect:
+   - a `W>` sign on the `#warning` line (6) and an `E>` sign on the
+     `return undeclared_sym;` line (8);
+   - `:lopen` lists both (1 warning + 1 error); `]d` / `[d` jump between them.
+4. Move the cursor onto line 8 — the error message echoes on the command line
+   (our 8.0 "hover" substitute).
+5. **Live/unsaved path:** in insert mode add a line such as `int x = nope;`,
+   leave insert, run `:FakeIdeCheck`. A new error sign + loclist entry appears
+   **without saving the file** — this proves the buffer is fed to clang on stdin.
+6. `:FakeIdeClear` removes the signs + location list. `:FakeIdeStatus` prints the
+   resolved flags; `:FakeIdeFlags` should include `-Wall` (from the fixture's
+   `.fakeide`). `:FakeIdeReloadFlags` clears the flag cache.
+
+Exact diagnostics command (also echoed in `docs/DESIGN.md` §5.3):
+`clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics -x c <flags> -I<file dir> -`
+with the buffer piped on stdin.
+
 ## 6. Working agreement between agents
 
 - **One source of truth.** All rules live in this file (`docs/INSTRUCTIONS.md`);

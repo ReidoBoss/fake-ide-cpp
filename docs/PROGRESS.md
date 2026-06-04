@@ -5,6 +5,59 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — Tier 1 complete: live diagnostics (signs + loclist + echo)
+
+**Done (verified against real Vim 8.0.0000, 22/22 checks PASS via `sh test/run.sh`):**
+- `autoload/fakeide/diag.vim` — async `clang -fsyntax-only` diagnostics engine:
+  - Buffer fed on **stdin** (`-x <c|c++> … -`) so unsaved edits are reflected;
+    `<stdin>` is remapped back to the buffer. `-I<file dir>` preserves quoted
+    `#include` resolution; `-fno-caret-diagnostics` keeps output to one line each.
+  - **Manual `matchlist()` parsing** of `file:line:col: severity: message`.
+    `getqflist({'lines':…})` is NOT used — that dict form is absent in 8.0.0000
+    (verified: returns no items).
+  - **Gutter signs** via `:sign place`/`:sign unplace` (8.0.0000 has no
+    `sign_place()` and no sign groups); placed ids tracked in `b:fakeide_sign_ids`
+    and unplaced on refresh. One sign per line, error beats warning.
+  - **Location list** per window; header errors keep their real path.
+  - **Cursor echo** of the diagnostic under the cursor (our 8.0 "hover").
+  - Triggers: `BufWritePost` always + debounced `CursorHold` (default on) /
+    `TextChangedI` (default off). `]d`/`[d` → `:lnext`/`:lprev`.
+- Wired `fakeide#diag#enable()` into `fakeide#enable()`; added `:FakeIdeCheck`,
+  `:FakeIdeClear` to `plugin/fakeide.vim`.
+- `test/fixtures/tier1/{.fakeide,broken.c}` (deterministic `#warning` + an
+  undeclared-identifier error); new `test/diag.vim`; `test/run.sh` now runs both
+  `smoke.vim` and `diag.vim`.
+
+**Key decisions / gotchas (also in DESIGN.md §5.2–5.3):**
+- **Job-wrapper bug found & fixed (Tier 0 regression):** with separate
+  stdout/stderr pipes, a process that writes ONLY to stderr (empty stdout) loses
+  its stderr — stdout EOFs instantly, `close_cb` finalizes before the buffered
+  stderr is delivered. `clang -fsyntax-only` is exactly this (all output on
+  stderr), so Tier 1 initially saw zero diagnostics. Fix: `job.vim` now merges
+  stderr into stdout by default (`err_io:'out'`, opt `merge_stderr`, default 1).
+  Everything arrives in `result.out`; `result.err` stays empty unless opted out.
+  The old smoke tests missed this because they only exercised stdout.
+- clang suppresses end-of-scope warnings (e.g. unused-variable) once a function
+  has a sema error, so the fixture uses `#warning` (fires in preprocessing) for a
+  deterministic warning alongside the error.
+- Manual `script`/pty one-offs are flaky in this sandbox (intermittent pty
+  alloc); `sh test/run.sh` is the reliable harness.
+
+**Exact command used (diagnostics):**
+`clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics -x c <flags> -I<dir> -`
+(buffer on stdin). Verified: warning@line 6, error@line 8 of `broken.c`; an
+unsaved appended line was also flagged, confirming the stdin/live-edit path.
+
+**How to run:** `sh test/run.sh`  ·  try it: `~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/tier1/broken.c` then `:FakeIdeCheck`, `:lopen`, move cursor onto line 6/8.
+
+**Next:** Tier 2 — `autoload/fakeide/complete.vim`: `omnifunc` driving
+`clang -Xclang -code-completion-at=-:L:C -` over the buffer on stdin, parse
+`COMPLETION:` lines into the insert-mode popup. (Completion reads stdout, so it
+can use `merge_stderr=0` to keep diagnostic noise out — though the `COMPLETION:`
+prefix filter also handles it.)
+
+---
+
 ## 2026-06-04 — Tier 0 complete: async job wrapper + flag resolution + bootstrap
 
 **Done (all verified against real Vim 8.0, 10/10 smoke checks PASS):**

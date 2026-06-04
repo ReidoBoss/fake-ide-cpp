@@ -1,0 +1,3 @@
+# Tier 1 diagnostics fixtures: enable -Wall so warnings are deterministic.
+-std=c11
+-Wall

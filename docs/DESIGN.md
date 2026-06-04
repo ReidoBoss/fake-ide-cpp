@@ -171,38 +171,65 @@ Testing showed `exit_cb` timing is unreliable — it can lag or not fire within
 seconds even after the process is dead, while `close_cb` and `out_cb` fire
 promptly. The exit code is taken from `exit_cb` when available, otherwise read
 from `job_info().exitval` once the process is reaped (polled briefly via a 10ms
-timer, ~3s ceiling). Two consequences captured in tests:
+timer, ~3s ceiling). Consequences captured in tests:
 - List-form `stdin` is newline-terminated, or the final line is dropped in
   `nl` mode.
 - Async/job behavior must be tested in a **real pty** (`script -q /dev/null …`);
   plain `vim -es` does not pump job/channel callbacks. See `test/run.sh`.
+- **stderr must be merged into stdout** (`err_io: 'out'`), and `job.vim` does
+  this by default (`merge_stderr`, on by default). With two separate pipes, a
+  process that writes *only* to stderr (empty stdout) EOFs stdout instantly;
+  `close_cb` then fires and we finalize **before** the buffered stderr is
+  delivered, silently losing it. `clang -fsyntax-only` is exactly this case
+  (diagnostics → stderr, stdout empty), so without the merge Tier 1 saw zero
+  diagnostics. Verified on Vim 8.0.0000. Result: everything arrives in
+  `result.out`; `result.err` stays empty unless a caller opts out with
+  `merge_stderr=0`.
 
-### 5.3 `diag.vim` — diagnostics (Tier 1)
+### 5.3 `diag.vim` — diagnostics (Tier 1) — IMPLEMENTED
 
-**Trigger:** `BufWritePost` (always) and debounced `CursorHold` / `TextChangedI`
-(optional, configurable — heavy files may want save-only).
+**Trigger:** `BufWritePost` (always) and debounced `CursorHold` (idle, on by
+default) / `TextChangedI` (while typing, off by default — heavy files may want
+save+idle only). All configurable via `g:fakeide_diag_*`.
 
-**Command:**
+**Command (buffer fed on stdin, so unsaved edits are reflected):**
 ```
-clang -fsyntax-only -fno-color-diagnostics \
-      -fdiagnostics-print-source-range-info \
-      <flags from flags.vim> <file>
+clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
+      -x <c|c++> <flags from flags.vim> -I<file's dir> -
 ```
-(`gcc` works identically with the same flags if the user prefers it.)
+- The current buffer is sent on **stdin** (`-`) so diagnostics reflect what's on
+  screen, not the last save. clang reports the unit as `<stdin>`; we map that
+  back to the buffer. Errors inside `#include`d headers keep their real path and
+  land in the location list (no sign in the editing buffer).
+- `-I<file's dir>` keeps quoted-`#include` resolution working (stdin has no
+  directory of its own, so clang would otherwise resolve against cwd).
+- `-fno-caret-diagnostics` suppresses the source/caret lines, leaving one clean
+  `file:line:col: severity: message` line per diagnostic.
+- (`gcc` works identically with the same flags if the user prefers it.)
 
-**Pipeline:**
-1. Run async via `job.vim`.
-2. On completion, parse `errorformat`-style lines:
-   `file:line:col: error: message` / `... warning: ...` / `note:`.
-   Vim's `getqflist({'lines': ...})` with a custom `errorformat` does the parsing
-   for us — no manual regex needed.
-3. Populate the **location list** (per-window, so each file keeps its own).
-4. Place **signs** in the gutter: `E>` red for errors, `W>` yellow for warnings.
-5. On `CursorHold`, if the cursor sits on a diagnostic line, **echo** the message
-   to the command line (our "hover" substitute).
+**Pipeline (as built):**
+1. Run async via `job.vim` (tag `diag:<bufnr>`, so a newer run supersedes the
+   stale one).
+2. On completion, **parse manually** with `matchlist()`. We do *not* use
+   `getqflist({'lines': ...})`: that dict form is a later 8.0.x patch and is
+   **absent in the pinned 8.0.0000 build** (verified — it returns no items).
+   Manual parsing also gives clean control over the `<stdin>` → buffer remap
+   and over `fatal error` / `note` severities.
+3. Populate the **location list** for a window showing the buffer (`setloclist`,
+   per-window).
+4. Place **signs** in the gutter (one per line; error wins over warning):
+   `E>` (ErrorMsg) and `W>` (WarningMsg). 8.0.0000 has **no `sign_place()`
+   function and no sign groups** (8.1+), so we use the `:sign place`/`:sign
+   unplace` ex-commands and track placed ids in `b:fakeide_sign_ids`, unplacing
+   them by id on each refresh.
+5. On `CursorMoved`/`CursorHold`, if the cursor sits on a diagnostic line,
+   **echo** the message (truncated to the command line) — our "hover" substitute.
 
-**Debounce:** `timer_start(300, ...)`; restart the timer on each change so we only
-compile ~300ms after the user stops typing.
+**Mappings (buffer-local, gated by `g:fakeide_diag_maps`):** `]d` / `[d` →
+`:lnext` / `:lprev`. **Commands:** `:FakeIdeCheck` (run now), `:FakeIdeClear`.
+
+**Debounce:** `timer_start(g:fakeide_diag_debounce, ...)` (default 300ms),
+restarted on each change so we only compile after the user pauses.
 
 ### 5.4 `complete.vim` — semantic completion (Tier 2)
 
@@ -332,8 +359,10 @@ Tiers are independently useful and shippable — Tier 1 alone is worth deploying
 
 ## 10. Open questions for review
 
-1. **Diagnostics frequency:** on-save only, or also debounced while typing?
-   (Affects CPU on large files.)
+1. **Diagnostics frequency:** ~~on-save only, or also debounced while typing?~~
+   **Decided (Tier 1):** `BufWritePost` always + debounced `CursorHold` (idle)
+   on by default; `TextChangedI` (every keystroke) off by default. All toggleable
+   via `g:fakeide_diag_on_idle` / `g:fakeide_diag_on_insert` for heavy files.
 2. **Completion compiler:** confirm **clang** is acceptable for completion (gcc
    can't do `-code-completion-at`); gcc remains fine for diagnostics.
 3. **PCH:** are we allowed to write `.pch` cache files into the project/tmp dir?
