@@ -5,6 +5,38 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-04 — Tier 0 complete: async job wrapper + flag resolution + bootstrap
+
+**Done (all verified against real Vim 8.0, 10/10 smoke checks PASS):**
+- `autoload/fakeide/job.vim` — async wrapper over `job_start`. Supersede-by-tag
+  (kills stale jobs), optional stdin, timeout guard, structured `on_done`
+  result `{code, out, err, tag}`.
+- `autoload/fakeide/flags.vim` — compile-flag resolution:
+  `compile_commands.json` → `.fakeide` → defaults, with per-file caching and
+  `-I`/`-isystem` paths made absolute against the entry's directory.
+- `autoload/fakeide.vim` — `fakeide#enable()` per-buffer entry point.
+- `plugin/fakeide.vim` — config defaults, diagnostic sign definitions,
+  commands `:FakeIdeStatus`, `:FakeIdeFlags`, `:FakeIdeReloadFlags`.
+- `ftplugin/c.vim`, `ftplugin/cpp.vim` — wire buffers to `fakeide#enable()`.
+- `test/` — headless smoke test (`smoke.vim`), runner (`run.sh`), fixtures.
+
+**Key decisions / gotchas (also in DESIGN.md §5.2):**
+- Finish runs on **`close_cb`**, not `exit_cb` — `exit_cb` timing is unreliable
+  on this build (process dead but callback never fired within 3s). Exit code
+  comes from `exit_cb` if it fired, else `job_info().exitval` (briefly polled).
+- List-form stdin must be newline-terminated or the last line is dropped (`nl`
+  mode). Fixed + regression-tested.
+- **Testing requires a pty:** `vim -es` does NOT pump job callbacks. Use
+  `sh test/run.sh` (wraps Vim in `script -q /dev/null`).
+
+**How to run:** `sh test/run.sh`   ·   try it: `~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/hello.c` then `:FakeIdeStatus`
+
+**Next:** Tier 1 — `autoload/fakeide/diag.vim`: async `clang -fsyntax-only` on
+`BufWritePost` (+ debounced idle), parse into the location list + gutter signs,
+echo the message under the cursor on `CursorHold`.
+
+---
+
 ## 2026-06-04 — Dev environment: Vim 8.0 built & installed
 
 **Done:**

@@ -1,0 +1,4 @@
+# fake-ide compile flags for the fixtures (used when no compile_commands.json).
+# One flag per line or several space-separated; '#' starts a comment.
+-std=c11
+-I.

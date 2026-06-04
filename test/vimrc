@@ -1,0 +1,16 @@
+" test/vimrc — try fake-ide interactively against vim80:
+"   ~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/hello.c
+" Then: :FakeIdeStatus  /  :FakeIdeFlags
+
+set nocompatible
+let s:root = expand('<sfile>:p:h:h')
+execute 'set runtimepath^=' . fnameescape(s:root)
+filetype plugin indent on
+syntax on
+
+" --- IDE-ish defaults for the sandbox (Vim 8.0-safe) ---
+set updatetime=300                          " snappier CursorHold (diagnostics, later)
+set signcolumn=yes                          " stable gutter for diagnostic signs
+set completeopt=menuone,noinsert,noselect   " usable completion menu
+set shortmess+=c                            " quiet completion messages
+set hidden

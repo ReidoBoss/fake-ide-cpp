@@ -81,6 +81,12 @@ See `docs/DESIGN.md` §7.
 
 - **One source of truth.** All rules live in this file (`docs/INSTRUCTIONS.md`);
   docs live in `docs/`. The root `AGENTS.md`/`CLAUDE.md` only point here.
+- **Never commit automatically — stop and ask the human to commit.** After you
+  implement a unit of work (code + verification + doc updates per this section),
+  do NOT run `git commit` on your own. Present what changed and explicitly ask
+  the human to commit, because the human verifies every change before it is
+  committed. Only run `git commit` when the human explicitly tells you to in
+  that turn. This keeps each commit a reviewed, verified checkpoint.
 - **Update the docs every time you finish a task — not optional.** Before you
   consider a unit of work done, update `docs/` so the next agent (Claude or
   Codex) inherits an accurate picture. Specifically:

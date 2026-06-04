@@ -158,12 +158,24 @@ A thin layer over Vim 8.0's `job_start()`:
 
 - Start a job with `in_io: 'pipe'` so we can feed the live (unsaved) buffer to
   the compiler's stdin.
-- Collect stdout/stderr via `out_cb`/`err_cb` (or `close_cb` for batch).
-- Track the running job per buffer; **kill the previous job** (`job_stop`) when a
+- Collect stdout/stderr via `out_cb`/`err_cb`.
+- Track the running job per `tag`; **kill the previous job** (`job_stop`) when a
   newer request supersedes it (debounced typing → only the latest matters).
 - Timeout guard via `timer_start`.
 
 This isolates every other component from raw channel plumbing.
+
+**Completion model (decided in Tier 0, verified against Vim 8.0):** we finish a
+run on **`close_cb`** (channel drained = all output read), *not* on `exit_cb`.
+Testing showed `exit_cb` timing is unreliable — it can lag or not fire within
+seconds even after the process is dead, while `close_cb` and `out_cb` fire
+promptly. The exit code is taken from `exit_cb` when available, otherwise read
+from `job_info().exitval` once the process is reaped (polled briefly via a 10ms
+timer, ~3s ceiling). Two consequences captured in tests:
+- List-form `stdin` is newline-terminated, or the final line is dropped in
+  `nl` mode.
+- Async/job behavior must be tested in a **real pty** (`script -q /dev/null …`);
+  plain `vim -es` does not pump job/channel callbacks. See `test/run.sh`.
 
 ### 5.3 `diag.vim` — diagnostics (Tier 1)
 
