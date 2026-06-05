@@ -5,6 +5,46 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — refs.vim: cheap project-wide references (`gr`)
+
+**Done (verified against real Vim 8.0.0000 — 5/5 refs checks PASS):**
+- `autoload/fakeide/refs.vim` — `fakeide#refs#find()` runs
+  `vimgrep /\<<cword>\>/jg <root>/**/*.{c,h,cc,hh,cpp,hpp,cxx,hxx}`, opens
+  the quickfix list, and echoes the hit count. Project-root heuristic mirrors
+  `goto.vim`'s fallback (compile_commands.json / .fakeide / .git → first hit
+  walking up; else the buffer's directory). Extension set shared with goto via
+  `g:fakeide_goto_grep_exts`.
+- `gr` (buffer-local, gated by `g:fakeide_refs_maps`) + `:FakeIdeReferences`.
+  Wired into `fakeide#enable()`.
+- `test/refs.vim` (5 checks: map wired, cross-file `compute_sum` hits, qflist
+  opens, multi-hit Widget). Hooked into `test/run.sh` loop.
+- DESIGN.md §5.7 documents the cheap-vs-accurate trade and the AST-walk
+  alternative (saved for Tier 4 / polish — multi-second JSON parse is the
+  blocker). TESTING.md gains a Tier 3 acceptance step for `gr`.
+
+**Honest limits (intentional, per §5.7):**
+- Textual match — catches comments, strings, similarly-named locals in
+  unrelated scopes. No scope / type filtering. The AST walk in clang's full
+  dump is the path to accurate refs and is the obvious follow-up if false
+  positives prove annoying day-to-day.
+
+**Exact command:** none — pure Vim `:vimgrep`. No clang invocation, no async
+plumbing, no `:sleep`-poll. Synchronous and fast even on big trees.
+
+**Heads-up:** `sh test/run.sh` currently reports `RESULT: FAIL` overall, but
+not from refs — `test/fixtures/tier1/broken.c` was edited locally (the
+`#warning` line and the `undeclared_sym` error removed) so Tier 1's diag test
+correctly says "no error to find." The fixture change is the user's; left
+in place per their instruction. Tier 1 will go green again the moment that
+file is restored to its committed shape (`git checkout -- test/fixtures/tier1/broken.c`).
+
+**Next:** unchanged — PCH for system headers (biggest completion / goto / info
+speedup), save-only diagnostics for very heavy files, async `complete()`
+auto-trigger (would also unblock auto-info on `CursorHold`), AST-walk refs
+("Tier 4" — see DESIGN §5.7).
+
+---
+
 ## 2026-06-05 — Tier 3 complete: go-to-definition + type info
 
 **Done (verified against real Vim 8.0.0000 — 15/15 new checks PASS, 56/56 total

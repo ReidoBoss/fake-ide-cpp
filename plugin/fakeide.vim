@@ -52,6 +52,7 @@ command! FakeIdeComplete    call feedkeys("i\<C-x>\<C-o>", 'n')
 command! FakeIdeJump        call fakeide#goto#jump()
 command! FakeIdeBack        call fakeide#goto#back()
 command! FakeIdeInfo        call fakeide#info#show()
+command! FakeIdeReferences  call fakeide#refs#find()
 
 function! s:status() abort
   let l:flags = fakeide#flags#for(expand('%:p'))

@@ -157,6 +157,16 @@ If every box checks, Tier 2 is good.
 7. **Preview-window variant.** `:let g:fakeide_info_in_preview=1`, then `K` on
    any of the names:
    - [ ] a small preview window opens with the signature instead of echoing
+8. **References (`gr` / `:FakeIdeReferences`).** Cursor onto a name with
+   multiple uses (e.g. `compute_sum` in `main.cpp`, or `Widget`), press `gr`:
+   - [ ] the quickfix list opens with hits across `main.cpp` *and* `lib.h`
+   - [ ] the command line echoes `fake-ide: N reference(s) to <sym>`
+   - [ ] `:cnext` / `:cprev` walk the hits; `:cclose` closes the list
+
+   Honest limit (documented in `docs/DESIGN.md` §5.7): refs is a **textual**
+   `\<sym\>` grep — comments, strings, and same-named locals in unrelated
+   scopes all show up. Accurate refs need a clang AST walk and aren't built
+   yet (PROGRESS "Next").
 
 **Expected feel / blocking note:** like Tier 2, `<C-]>` and `K` are
 **synchronous** — clang parses the TU each time (~100ms–1s+). The pause only

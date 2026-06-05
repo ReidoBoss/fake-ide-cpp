@@ -381,6 +381,40 @@ constraint (§5.4) means autorun would block on idle. Triggered via `K`
 **Synchronous wait:** identical pattern to Tier 2 / goto — `job.vim` with tag
 `info:<bufnr>`, bounded `:sleep`-poll, capped at `g:fakeide_info_timeout`+500ms.
 
+### 5.7 `refs.vim` — project-wide references (cheap, textual) — IMPLEMENTED
+
+The dumb-but-fast counterpart to §5.5's goto. Find references is the LSP move
+that takes the most index work to do *accurately*; we explicitly do not do that
+work and instead grep.
+
+**How it works:**
+- `<cword>` under the cursor (rejects non-identifiers).
+- `s:project_root()` — same heuristic as goto.vim's fallback: walk up looking
+  for `compile_commands.json` / `.fakeide` / `.git`; fall back to the buffer's
+  directory if none found.
+- `:vimgrep /\<sym\>/jg <root>/**/*.{c,h,cc,hh,cpp,hpp,cxx,hxx}` — extension
+  set shared with goto's fallback via `g:fakeide_goto_grep_exts`. `j` keeps
+  the cursor put; `g` collects multiple hits per line.
+- Open quickfix (`copen`); echo `"N reference(s) to <sym>"` with the count.
+
+**Honest limits (this is a 20% solution by design):**
+- Textual match: catches comments, strings, and same-named locals in unrelated
+  scopes.
+- No type / scope filtering. Two unrelated classes both named `Point::dist`
+  share one hit bucket.
+- Doesn't dedupe overload sets, doesn't separate declarations from uses.
+
+**Why not the AST walk.** The "accurate" version would `clang -ast-dump=json`
+the whole TU (no filter), walk `DeclRefExpr` / `MemberExpr` / `CXXConstructExpr`
+nodes by `referencedDecl.id` matching the target's id, and dedupe by `loc`.
+Cost: heavy TU = MBs of JSON, and `json_decode` is multi-second under Vim.
+That's a real tier of work (call it Tier 4) — open as a future "polish" item
+in PROGRESS.md.
+
+**Public:** `:FakeIdeReferences` / `gr` (buffer-local, gated by
+`g:fakeide_refs_maps`). No async path needed — vimgrep is synchronous and
+cheap.
+
 ---
 
 ## 6. UX in Vim 8.0 (what it actually looks like)

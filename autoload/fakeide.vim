@@ -22,4 +22,6 @@ function! fakeide#enable() abort
   " Tier 3: go-to-definition (clang AST dump) + type info (code-completion).
   call fakeide#goto#enable()
   call fakeide#info#enable()
+  " Tier 3 extra: cheap project-wide references (vimgrep into quickfix).
+  call fakeide#refs#enable()
 endfunction
