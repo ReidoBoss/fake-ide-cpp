@@ -62,8 +62,12 @@ filetype plugin indent on
 syntax on
 
 " IDE-ish defaults (all Vim 8.0-safe).
+set number                                  " line numbers on the left
 set updatetime=300                          " snappier idle diagnostics
-set signcolumn=yes                          " stable gutter for signs
+set signcolumn=auto                         " sign gutter only when a sign is placed
+                                            "   (use `yes` to reserve the column
+                                            "   permanently — avoids the code shifting
+                                            "   right when an error first appears)
 set completeopt=menuone,noinsert,noselect   " usable insert-mode menu
 set shortmess+=c                            " quiet completion messages
 set hidden
