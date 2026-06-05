@@ -1,0 +1,4 @@
+# Playground flags. fake-ide picks this up automatically (DESIGN §5.1).
+-std=c++17
+-Wall
+-Wextra

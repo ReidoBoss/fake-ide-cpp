@@ -8,6 +8,27 @@ the final `RESULT: PASS`.
 - Vim 8.0 at `~/opt/vim80/bin/vim` (the project build).
 - `clang` on your `PATH`.
 
+**Daily-use install (optional — needed only if you want fake-ide active on any
+C/C++ file outside the repo, not just under `-Nu test/vimrc`).** Add this to
+`~/.vimrc` (it is read by `vim80`; `nvim` reads its own config and is
+unaffected):
+
+```vim
+set nocompatible
+let s:fakeide = expand('~/Projects/fake-ide-cpp')
+execute 'set runtimepath^=' . fnameescape(s:fakeide)
+execute 'set runtimepath+=' . fnameescape(s:fakeide . '/after')
+filetype plugin indent on
+syntax on
+set updatetime=300 signcolumn=yes completeopt=menuone,noinsert,noselect
+set shortmess+=c hidden
+```
+
+The `+= ... /after` line matters — without it, Vim's bundled
+`$VIMRUNTIME/ftplugin/{c,cpp}.vim` clobbers our `omnifunc` (`<C-x><C-o>` falls
+back to the built-in `ccomplete#Complete` instead of fake-ide). Verify with
+`vim80 some.cpp` → `:set omnifunc?` → should print `fakeide#complete#omni`.
+
 ---
 
 ## Quick automated pass
@@ -99,6 +120,58 @@ If every box checks, Tier 2 is good.
 
 ---
 
+## Tier 3 — go-to-definition + type info (by hand)
+
+1. Open the Tier 3 fixture:
+   ```sh
+   ~/opt/vim80/bin/vim -Nu test/vimrc test/fixtures/tier3/main.cpp
+   ```
+2. **Cross-file go-to-definition.** Move the cursor onto `compute_sum` (line 22)
+   and press `<C-]>` (or `:FakeIdeJump`). Brief pause (clang parse — same
+   "no daemon" cost as Tier 2):
+   - [ ] the buffer switches to **`lib.h`** and the cursor lands on the
+         declaration at **line 5**
+   - [ ] `<C-t>` (or `:FakeIdeBack`) returns to `main.cpp` at the original
+         cursor position
+3. **Same-file go-to-definition.** Cursor onto `local_helper` (line 23),
+   `<C-]>`:
+   - [ ] cursor jumps to the definition at **line 14** (same buffer)
+   - [ ] `<C-t>` returns
+4. **Unsaved decls jump too** (proves the buffer is sent on stdin). Add a new
+   function above `main` without saving:
+   ```cpp
+   int unsaved_decl() { return 0; }
+   ```
+   Insert a call `unsaved_decl();` inside `main`, position the cursor on the
+   call, `<C-]>`:
+   - [ ] jumps to the new (unsaved) definition
+5. **Vimgrep fallback.** Type a probe line `// probe: nonsense_xyz here.`, put
+   the cursor on `nonsense_xyz`, `<C-]>`:
+   - [ ] AST returns nothing, the quickfix list opens with vimgrep matches
+         (likely empty for a truly nonexistent name) — no silent jump
+6. **Type / signature info (`K`).** Cursor onto various names, press `K` (or
+   `:FakeIdeInfo`):
+   - [ ] on `w.width` (line 20) → command-line echoes **`int width`**
+   - [ ] on `w.area()` (line 22) → echoes **`int area() const`**
+   - [ ] on `compute_sum` (line 22) → echoes **`int compute_sum(int a, int b)`**
+7. **Preview-window variant.** `:let g:fakeide_info_in_preview=1`, then `K` on
+   any of the names:
+   - [ ] a small preview window opens with the signature instead of echoing
+
+**Expected feel / blocking note:** like Tier 2, `<C-]>` and `K` are
+**synchronous** — clang parses the TU each time (~100ms–1s+). The pause only
+happens on the keypress, never on idle. If a jump or info call takes too long
+it aborts after `g:fakeide_goto_timeout` / `g:fakeide_info_timeout` ms.
+
+**Troubleshooting:** `<C-]>` silently doing nothing on a known-good symbol? Run
+`:FakeIdeStatus` and check `compiler=clang`. The `-ast-dump-filter` flag needs
+clang; goto via gcc isn't supported. If `:FakeIdeFlags` is missing your `-I`
+paths, definitions in headers won't be found.
+
+If every box checks, Tier 3 is good.
+
+---
+
 ## Reference: the exact compiler command
 
 Diagnostics shell out to (buffer piped on stdin):
@@ -118,3 +191,15 @@ clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
 ```
 
 It parses the `COMPLETION:` lines from stdout. See `docs/DESIGN.md` §5.4.
+
+Go-to-definition (Tier 3) shells out to:
+
+```
+clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
+      -Xclang -ast-dump=json -Xclang -ast-dump-filter=<sym> \
+      -x c++ <flags from flags.vim> -I<file's dir> -
+```
+
+It parses clang's stream of top-level JSON objects, enforces exact `name == sym`
+(the filter is prefix-matched), and reads `loc.file` / `loc.line` / `loc.col`
+off the matched `*Decl` node. See `docs/DESIGN.md` §5.5.

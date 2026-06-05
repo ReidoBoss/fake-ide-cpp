@@ -5,6 +5,9 @@
 set nocompatible
 let s:root = expand('<sfile>:p:h:h')
 execute 'set runtimepath^=' . fnameescape(s:root)
+" Standard "after/" convention: append <root>/after so files under
+" after/ftplugin/ override Vim's bundled $VIMRUNTIME/ftplugin/{c,cpp}.vim.
+execute 'set runtimepath+=' . fnameescape(s:root . '/after')
 filetype plugin indent on
 syntax on
 

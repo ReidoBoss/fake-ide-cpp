@@ -5,6 +5,117 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — Tier 3 complete: go-to-definition + type info
+
+**Done (verified against real Vim 8.0.0000 — 15/15 new checks PASS, 56/56 total
+via `sh test/run.sh`):**
+- `autoload/fakeide/goto.vim` — go-to-definition driving
+  `clang -Xclang -ast-dump=json -Xclang -ast-dump-filter=<sym>` over the buffer
+  on stdin (unsaved decls reflected, same stdin design as Tier 1/2):
+  - Parses clang's **stream of top-level JSON objects** (no array wrapper). We
+    split on column-0 `{` … `}` boundaries and `json_decode()` each independently.
+  - `-ast-dump-filter` is a **prefix match**, so `pick_decl` enforces
+    `name == sym` AND `kind =~ Decl$` AND `loc.line` is present. Implicit
+    builtins matched only by prefix (`loc: {}`) are skipped.
+  - Same-file matches win over cross-file; `loc.file == "<stdin>"` is remapped
+    back to the buffer's absolute path. Header decls come back with the real
+    file path (absolute, because we pass `-I<abs file dir>`).
+  - **Vimgrep fallback** (quickfix) when the AST primary returns nothing.
+  - **Own jump stack** (`s:tagstack`) — `settagstack()`/`gettagstack()` are
+    8.0.1453+, NOT in 8.0.0000. Verified by tests: pop restores file + line + col.
+- `autoload/fakeide/info.vim` — type/signature info:
+  - Reuses Tier 2's `code-completion-at`. Aims at the **start** of the cword so
+    candidates come back with empty prefix (rich result set); picks the entry
+    whose `word == cword`. Same `[#ret#]`/`<#param#>` unwrapping as
+    `complete.vim`. Renders one line (`<ret> <signature>`) via command-line echo,
+    or `:pedit` preview when `g:fakeide_info_in_preview=1`.
+  - **On-demand only** (`K` / `:FakeIdeInfo`) — never on `CursorHold`, same
+    synchronous-blocking constraint as omnifunc.
+- `plugin/fakeide.vim`: defaults (`fakeide_goto_timeout`, `fakeide_info_timeout`,
+  `fakeide_info_in_preview`) + commands `:FakeIdeJump`, `:FakeIdeBack`,
+  `:FakeIdeInfo`. `autoload/fakeide.vim` calls `fakeide#goto#enable()` and
+  `fakeide#info#enable()` from `fakeide#enable()`.
+- `test/fixtures/tier3/{.fakeide,lib.h,main.cpp}` — deterministic cross-file
+  fixture; new `test/goto.vim` (8 checks) + `test/info.vim` (7 checks);
+  `test/run.sh` loop extended with `goto info`.
+
+**Key decisions / gotchas (also in DESIGN.md §5.5 / §5.6):**
+- **Prefix-match trap in clang's `-ast-dump-filter`.** Probing with filter `x`
+  matched 40 implicit `__clang_svintNNx2_t` typedefs alongside the real `x`
+  field. Without our `name == sym` guard, goto on `x` would land on a builtin
+  typedef. The `goto-no-prefix-jump` test pins this: probing with bare token
+  `compute` (prefix of `compute_sum`) must NOT silently jump to `compute_sum`'s
+  decl — it falls through to vimgrep.
+- **No `settagstack` in 8.0.0000.** Settled on a script-local stack of
+  `{bufnr, lnum, col, file}` rather than emulating tag-stack APIs.
+- **Sync wait, same as Tier 2.** Both goto and info run `clang` via the async
+  `job.vim` (tagged `goto:<bufnr>` / `info:<bufnr>`, superseding stale runs)
+  then **`:sleep 10m` poll** until on_done fires (cap = timeout+500ms). One-shot
+  user actions — never auto-fired — so the brief UI block is acceptable.
+- **AST dump output is heavy.** Even with `-ast-dump-filter` reducing what's
+  *printed*, clang still parses the full TU and prints the entire subtree of
+  each match (Tier 2's "Point" filter is ~530 lines). Acceptable for an explicit
+  jump; not acceptable on every keystroke (we never autorun it).
+
+**Exact commands used:**
+- Goto:
+  `clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics -Xclang -ast-dump=json -Xclang -ast-dump-filter=<sym> -x c++ <flags> -I<dir> -`
+- Info (same as Tier 2 completion):
+  `clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics -x c++ -Xclang -code-completion-at=-:L:STARTCOL <flags> -I<dir> -`
+
+Verified via the fixture `test/fixtures/tier3/main.cpp`:
+- `<C-]>` on `compute_sum` (line 22 col 15) → `lib.h:5:5` (cross-file).
+- `<C-t>` → back to `main.cpp:22:15`.
+- `<C-]>` on `local_helper` (line 23) → `main.cpp:14` (same-file).
+- `K` on `w.width` → echoes `int width`; on `w.area()` → `int area() const`;
+  on `compute_sum` → `int compute_sum(int a, int b)`.
+
+**How to run:** `sh test/run.sh`  ·  try it: `vim80 -Nu test/vimrc
+test/fixtures/tier3/main.cpp`, position cursor on a name and press `<C-]>` /
+`<C-t>` / `K` (or `:FakeIdeJump` / `:FakeIdeBack` / `:FakeIdeInfo`).
+
+**Dev-env note:** the `~/opt/vim80` build from 2026-06-04 was no longer present
+this session, so we rebuilt from the same recipe (PROGRESS.md 2026-06-04, also
+in DESIGN §11). Build clean on Apple clang 17. The user's `vim80` shell alias
+should point at `~/opt/vim80/bin/vim` (not yet in `~/.zsh/*.zsh` — only
+`vim=nvim` is there; worth pinning it so future agents don't re-discover this).
+
+**Daily-use install (this session, after Tier 3):**
+- Added `after/ftplugin/c.vim` and `after/ftplugin/cpp.vim` (one-liners,
+  `setlocal omnifunc=fakeide#complete#omni`). Reason: Vim's bundled
+  `$VIMRUNTIME/ftplugin/cpp.vim` runs after ours and resets `omnifunc` to
+  `ccomplete#Complete` — fake-ide's omnifunc otherwise loses to the built-in
+  the moment you `vim80 foo.cpp` without `-Nu test/vimrc`.
+- Created `~/.vimrc` (read by `vim80` only — nvim reads its own
+  `~/.config/nvim/init.lua`) that adds BOTH the project root AND `<root>/after`
+  to runtimepath (standard pathogen-style convention). Updated `test/vimrc` to
+  do the same so the layout stays consistent.
+- Created `~/.zsh/vim80.zsh` with `alias vim80="$HOME/opt/vim80/bin/vim"`
+  (sourced automatically by `~/.zshrc`).
+- DESIGN §4 directory layout now lists `after/ftplugin/` and notes the
+  `runtimepath+=...after` requirement. TESTING.md gained a "Daily-use install"
+  block at the top.
+- **Heads-up:** the pinned Vim 8.0 build at `~/opt/vim80/` was not present at
+  the start of this session — rebuilt from the 2026-06-04 recipe (worked
+  unchanged on Apple clang 17). Tier 0's PROGRESS entry is still the
+  reproducible source for the build steps.
+
+**Verified wakeup (vim80 outside the project):** `vim80 /tmp/any.cpp` →
+`filetype=cpp`, `b:fakeide_active=1`, `omnifunc=fakeide#complete#omni`,
+`<C-]>`/`K` mapped. Plus the headless suite remains 56/56 PASS after the
+after/ftplugin + runtimepath changes.
+
+**Next:** Polish / PCH. Highest-leverage remaining items (DESIGN §7):
+- **PCH for system headers** — biggest completion / goto / info speedup; still
+  the open item from Tier 2 (also helps Tier 3 since the same TU is parsed).
+- Save-only diagnostics mode + per-project flag overrides for very heavy files.
+- Async `complete()` auto-trigger path (would also let info auto-fire on
+  CursorHold without blocking).
+- Open question #5 (install location: per-user `~/.vim/` vs. checked-in
+  project-local `runtimepath`) still untouched.
+
+---
+
 ## 2026-06-05 — Tier 2 complete: semantic completion (omnifunc → clang)
 
 **Done (verified against real Vim 8.0.0000 — 16/16 new checks PASS, 40/40 total

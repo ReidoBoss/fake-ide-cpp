@@ -29,6 +29,13 @@ let g:fakeide_complete_auto    = get(g:, 'fakeide_complete_auto', 0)
 let g:fakeide_complete_timeout = get(g:, 'fakeide_complete_timeout', 3000)
 let g:fakeide_complete_max     = get(g:, 'fakeide_complete_max', 200)
 
+" Tier 3 — go-to-definition + type info. Both run clang synchronously on demand
+" (no autocmd triggers) so the brief blocking pause only happens when the user
+" invokes them. See autoload/fakeide/goto.vim and info.vim.
+let g:fakeide_goto_timeout     = get(g:, 'fakeide_goto_timeout', 5000)
+let g:fakeide_info_timeout     = get(g:, 'fakeide_info_timeout', 3000)
+let g:fakeide_info_in_preview  = get(g:, 'fakeide_info_in_preview', 0)
+
 " --- Diagnostic signs (used from Tier 1 onward) ---
 if has('signs')
   sign define FakeIdeError   text=E> texthl=ErrorMsg
@@ -42,6 +49,9 @@ command! FakeIdeStatus      call s:status()
 command! FakeIdeCheck       call fakeide#diag#check()
 command! FakeIdeClear       call fakeide#diag#clear()
 command! FakeIdeComplete    call feedkeys("i\<C-x>\<C-o>", 'n')
+command! FakeIdeJump        call fakeide#goto#jump()
+command! FakeIdeBack        call fakeide#goto#back()
+command! FakeIdeInfo        call fakeide#info#show()
 
 function! s:status() abort
   let l:flags = fakeide#flags#for(expand('%:p'))

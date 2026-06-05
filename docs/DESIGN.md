@@ -113,6 +113,10 @@ What Vim 8.0 **does** give us (and what the whole design rests on):
 ├── ftplugin/
 │   ├── c.vim                        wire up C buffers
 │   └── cpp.vim                      wire up C++ buffers
+├── after/
+│   └── ftplugin/
+│       ├── c.vim                    re-assert our omnifunc after Vim's built-in
+│       └── cpp.vim                  re-assert our omnifunc after Vim's built-in
 ├── autoload/
 │   └── fakeide/
 │       ├── job.vim                  async job wrapper (job_start/ch_*)
@@ -124,6 +128,12 @@ What Vim 8.0 **does** give us (and what the whole design rests on):
 ├── plugin/
 │   └── fakeide.vim                  commands, signs definitions, defaults
 └── DESIGN.md                        this file
+
+To get `after/` semantics, the user's `~/.vimrc` (or `test/vimrc`) must add BOTH
+the project root (prepended) AND `<root>/after` (appended) to `runtimepath` —
+the standard pathogen/vim-plug convention. Without the `+=...after` step, Vim's
+`runtime!` walk only finds `<root>/ftplugin/cpp.vim`, after which
+`$VIMRUNTIME/ftplugin/cpp.vim` runs and clobbers our `setlocal omnifunc`.
 ```
 
 We keep almost everything in `autoload/` so Vimscript lazy-loads it only when a
@@ -309,24 +319,67 @@ future enhancement could move auto-trigger to the async `complete()` path.
 > heavy templates can hit 1s+. It will feel slower than clangd. That is the
 > documented cost of "no daemon / no third party."
 
-### 5.5 `goto.vim` — go-to-definition (Tier 3)
+### 5.5 `goto.vim` — go-to-definition (Tier 3) — IMPLEMENTED
 
-Vim 8.0 has no LSP `textDocument/definition`. Two viable approaches, no ctags:
+Vim 8.0 has no LSP `textDocument/definition`, and we forbid ctags. Two paths:
 
-- **Compiler-assisted (preferred):** use clang's AST dump for the current file
-  (`clang -Xclang -ast-dump=json -fsyntax-only`) parsed with `json_decode()` to
-  locate the declaration of the symbol under the cursor. Heavier but accurate.
-- **Heuristic fallback:** `vimgrep` across project files for the symbol's
-  declaration/definition pattern, presented in the quickfix list. Fast, dumb,
-  good enough for jumping around.
+**Primary — compiler-assisted (as built):**
+```
+clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
+      -Xclang -ast-dump=json -Xclang -ast-dump-filter=<symbol> \
+      -x <c|c++> <flags from flags.vim> -I<file dir> -
+```
+- Buffer fed on stdin (same design as §5.3/§5.4) so unsaved decls are visible.
+- `-ast-dump-filter=` is a **prefix match**, so the parser enforces exact
+  `name == symbol`. clang emits a stream of top-level JSON objects (no array
+  wrapper); we split on column-0 `{` … `}` boundaries and `json_decode()` each
+  independently. From each matched object we read `loc.file` / `loc.line` /
+  `loc.col`. `loc.file == "<stdin>"` means the current buffer. Implicit
+  builtins prefix-matched by the filter have `loc: {}` and are skipped.
+- Same-file matches win over cross-file; first match wins within each bucket.
+  Only nodes whose `kind` ends in `Decl` are considered (`FunctionDecl`,
+  `CXXMethodDecl`, `VarDecl`, `FieldDecl`, `CXXRecordDecl`, `EnumDecl`,
+  `TypedefDecl`, …).
 
-Jump with the standard tag stack semantics (`C-]` feel) so it's familiar.
+**Fallback — heuristic `vimgrep`:** triggered only when the AST primary returns
+nothing. `vimgrep /\<sym\>/j` across C/C++ source extensions under the project
+root (the nearest dir containing `compile_commands.json` / `.fakeide` / `.git`,
+else the buffer's directory), opens the quickfix list. Dumb but works without
+the TU parsing.
 
-### 5.6 `info.vim` — type info / signature (Tier 3)
+**Tag-stack:** Vim 8.0.0000 lacks `settagstack()`/`gettagstack()` (introduced in
+8.0.1453). We keep our own script-local stack of `{bufnr, lnum, col, file}`;
+`:FakeIdeJump` (`<C-]>`) pushes, `:FakeIdeBack` (`<C-t>`) pops. Buffer-local
+mappings only, gated by `g:fakeide_goto_maps`.
 
-Reuse the code-completion output (it carries return types and signatures) or a
-targeted AST query at the cursor. Display via **command-line echo** and/or the
-**preview window** (`:pedit`), since 8.0 has no hover popups.
+**Synchronous wait (same constraint as Tier 2 — see §5.4 / §10):** jump runs
+clang async via `job.vim` (tag `goto:<bufnr>`, supersede stale) then waits on a
+bounded `:sleep 10m` poll loop, capped at `g:fakeide_goto_timeout`+500ms. A jump
+is a one-shot user action, so the brief UI block is acceptable.
+
+### 5.6 `info.vim` — type info / signature (Tier 3) — IMPLEMENTED
+
+Reuses the Tier 2 completion mechanism rather than a separate AST query.
+
+**How it works:**
+- Read the cword and the start column of the identifier (same `\k`-scan as
+  `complete.vim`'s `findstart`).
+- Aim `clang -Xclang -code-completion-at=-:LINE:START_COL` at the **start** of
+  the identifier so candidates come back with the typed prefix empty (rich
+  result set), and find the entry whose `word == cword`.
+- Re-unwrap the signature (same `[#ret#]` / `<#param#>` / `{#opt#}` / `[#
+  const#]` handling as `complete.vim`'s `s:item`) and render
+  `<ret> <signature>` via command-line echo. Truncated to fit one line — 8.0
+  has no popups (§3).
+- Optional `g:fakeide_info_in_preview` opens a small scratch preview window
+  via `:pedit` instead (`nofile`, `bufhidden=wipe`).
+
+**On-demand only.** Not wired to `CursorHold` — the same synchronous-blocking
+constraint (§5.4) means autorun would block on idle. Triggered via `K`
+(buffer-local, gated by `g:fakeide_info_maps`) and `:FakeIdeInfo`.
+
+**Synchronous wait:** identical pattern to Tier 2 / goto — `job.vim` with tag
+`info:<bufnr>`, bounded `:sleep`-poll, capped at `g:fakeide_info_timeout`+500ms.
 
 ---
 
