@@ -86,6 +86,13 @@ augroup fakeide_lsp_keys
   autocmd FileType c,cpp nnoremap <silent> <buffer> gd :tab split <Bar> FakeIdeJump<CR>
   autocmd FileType c,cpp nnoremap <silent> <buffer> gD :FakeIdeBack<CR>
 augroup END
+
+" Optional — tab navigation. <Tab> next tab, Shift-<Tab> previous.
+" Caveat: in a terminal <Tab> and <C-i> are the same key, so this overrides
+" Vim's built-in <C-i> ("jump forward in the jumplist"). Comment out and use
+" `gt` / `gT` if you rely on <C-i>.
+nnoremap <silent> <Tab>   :tabnext<CR>
+nnoremap <silent> <S-Tab> :tabprev<CR>
 ```
 
 ### 3. Verify
