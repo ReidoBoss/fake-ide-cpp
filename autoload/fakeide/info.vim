@@ -22,6 +22,7 @@ let s:save_cpo = &cpo
 set cpo&vim
 
 let s:warned_no_compiler = 0
+let s:warned_no_clang    = 0
 let s:sync = {'done': 1, 'out': []}
 
 function! s:enabled() abort
@@ -46,6 +47,17 @@ function! fakeide#info#show() abort
   let l:sym = expand('<cword>')
   if empty(l:sym) || l:sym !~# '^[A-Za-z_][A-Za-z0-9_]*$'
     echohl WarningMsg | echo 'fake-ide: no symbol under cursor' | echohl None
+    return
+  endif
+
+  " Type info reuses clang's code-completion machinery — gcc has no equivalent.
+  if !fakeide#has_clang()
+    if !s:warned_no_clang
+      let s:warned_no_clang = 1
+      echohl WarningMsg
+      echomsg 'fake-ide: type info requires clang (gcc has no -code-completion-at); disabled'
+      echohl None
+    endif
     return
   endif
 

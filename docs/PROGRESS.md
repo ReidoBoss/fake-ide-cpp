@@ -5,6 +5,54 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — gcc-only graceful degradation
+
+**Why:** user's work machine has gcc but not clang. Completion / type info
+need `-Xclang -code-completion-at` (clang-only), and goto's AST primary needs
+`-Xclang -ast-dump=json` (also clang-only). Without this work the user gets
+silent failures and confusing behaviour when those features fire against
+gcc.
+
+**Done (verified — 5/5 new checks PASS in `test/gcc_only.vim`):**
+- `autoload/fakeide.vim` gains `fakeide#has_clang()`: caches the result of
+  probing `<compiler> --version` for the literal "clang" (Apple's `gcc` is
+  clang under the hood; GNU's isn't). Overridable via `g:fakeide_has_clang`
+  for tests and for users who want to force the degraded path.
+- `autoload/fakeide/complete.vim`: `s:findstart()` returns `-2` (silent
+  cancel) when `!fakeide#has_clang()`, with a one-shot warning so the user
+  knows why `<C-x><C-o>` is doing nothing.
+- `autoload/fakeide/goto.vim`: routes directly to the existing
+  `s:vimgrep_fallback()` when there's no clang (quickfix of textual hits —
+  approximate but useful), one-shot warning.
+- `autoload/fakeide/info.vim`: bails with a warning and prints nothing.
+- `plugin/fakeide.vim`: `:FakeIdeStatus` now appends `(gcc-only — no clang
+  detected)` and a two-line note about what's disabled.
+- README adds a "gcc-only mode" section with the feature matrix and
+  `g:fakeide_compiler='gcc'` / `g:fakeide_has_clang=0` instructions.
+- `docs/INSTRUCTIONS.md` §2.4 updated to call out the runtime detection and
+  the override knob.
+
+**Key decisions / gotchas:**
+- **Name-based detection is wrong on macOS.** `/usr/bin/gcc` IS Apple clang.
+  A naive check would let the clang-only paths run anyway (they'd succeed
+  because gcc-named-clang accepts `-Xclang`). Probe via `--version` is the
+  right test.
+- **goto degrades to vimgrep, not to nothing.** Pressing `<C-]>` on a
+  gcc-only machine opens a quickfix of textual candidates rather than
+  silently failing. Less surprising; closer to "something useful happens."
+- **Refs and diagnostics aren't gated** — they don't need clang. Pure
+  -fsyntax-only (gcc has it) and pure vimgrep respectively.
+- We can't truly run a "no clang" smoke test on this Mac (Apple `gcc` IS
+  clang). The test forces the path via `g:fakeide_has_clang=0` before
+  `fakeide#enable()` runs.
+
+**Next:** unchanged from prior entries — PCH for completion speed, async
+`complete()` auto-trigger, AST-walk refs ("Tier 4"). The gcc-only path
+doesn't add anything to that list; it just makes the existing feature set
+honest about what works without clang.
+
+---
+
 ## 2026-06-05 — refs.vim: cheap project-wide references (`gr`)
 
 **Done (verified against real Vim 8.0.0000 — 5/5 refs checks PASS):**

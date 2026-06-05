@@ -40,6 +40,7 @@ let s:save_cpo = &cpo
 set cpo&vim
 
 let s:warned_no_compiler = 0
+let s:warned_no_clang    = 0
 
 " Single sync slot: completion blocks, so only one run is ever in flight.
 let s:sync = {'done': 1, 'out': []}
@@ -67,6 +68,17 @@ endfunction
 " keyword chars from the cursor. -2 cancels completion silently (e.g. no clang).
 function! s:findstart() abort
   if !s:enabled() || empty(s:compiler())
+    return -2
+  endif
+  " `-Xclang -code-completion-at` is clang-only. Cancel silently with a
+  " one-shot warning so gcc-only users know why <C-x><C-o> does nothing.
+  if !fakeide#has_clang()
+    if !s:warned_no_clang
+      let s:warned_no_clang = 1
+      echohl WarningMsg
+      echomsg 'fake-ide: semantic completion requires clang (gcc has no -code-completion-at); disabled'
+      echohl None
+    endif
     return -2
   endif
   let l:line = getline('.')

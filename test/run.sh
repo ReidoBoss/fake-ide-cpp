@@ -27,7 +27,7 @@ run_in_pty() {
 
 FAIL=0
 echo "== fake-ide tests ($("$VIM" --version | head -1)) =="
-for t in smoke diag complete goto info refs; do
+for t in smoke diag complete goto info refs gcc_only; do
   OUT="$(mktemp /tmp/fakeide_${t}.XXXXXX)"
   FAKEIDE_SMOKE_OUT="$OUT" TERM=xterm \
     run_in_pty "$VIM -N -u NONE -i NONE -S $HERE/$t.vim"

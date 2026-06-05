@@ -43,6 +43,7 @@ let s:save_cpo = &cpo
 set cpo&vim
 
 let s:warned_no_compiler = 0
+let s:warned_no_clang    = 0
 
 " Our own jump stack: list of {bufnr, lnum, col, file}.
 let s:tagstack = []
@@ -80,6 +81,19 @@ function! fakeide#goto#jump() abort
   let l:bufnr = bufnr('%')
   let l:from  = {'bufnr': l:bufnr, 'lnum': line('.'), 'col': col('.'),
         \ 'file': fnamemodify(bufname(l:bufnr), ':p')}
+
+  " AST goto is clang-only (`-Xclang -ast-dump=json`). On gcc-only toolchains
+  " skip the primary and route directly to the vimgrep fallback so users still
+  " get a quickfix of textual candidates — approximate but useful.
+  if !fakeide#has_clang()
+    if !s:warned_no_clang
+      let s:warned_no_clang = 1
+      echohl WarningMsg
+      echomsg 'fake-ide: AST goto requires clang; using vimgrep fallback'
+      echohl None
+    endif
+    return s:vimgrep_fallback(l:sym, l:from)
+  endif
 
   let l:target = s:resolve_via_ast(l:sym, l:bufnr)
   if empty(l:target)

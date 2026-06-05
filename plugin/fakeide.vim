@@ -56,10 +56,16 @@ command! FakeIdeReferences  call fakeide#refs#find()
 
 function! s:status() abort
   let l:flags = fakeide#flags#for(expand('%:p'))
+  let l:has_clang = fakeide#has_clang()
   echo 'fake-ide  vim=' . v:version . '  compiler=' . g:fakeide_compiler
+        \ . (l:has_clang ? '' : '  (gcc-only — no clang detected)')
   echo '  file:   ' . expand('%:t')
   echo '  source: ' . fakeide#flags#source()
   echo '  flags:  ' . join(l:flags, ' ')
+  if !l:has_clang
+    echo '  note:   completion / type info disabled; goto falls back to vimgrep.'
+    echo '          diagnostics + references still work.'
+  endif
 endfunction
 
 let &cpo = s:save_cpo

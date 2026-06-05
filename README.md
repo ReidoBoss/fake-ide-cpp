@@ -28,7 +28,10 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) §10 for the honest cost discussion.
     `clang` specifically; diagnostics work with either `clang` or `gcc`.
   - If you're stuck on an older Vim, build 8.0.0000 from source — the recipe
     is in [`docs/PROGRESS.md`](docs/PROGRESS.md) (2026-06-04 entry).
-- **`clang`** (or `gcc` if you only want diagnostics) on `$PATH`.
+- **`clang`** on `$PATH` for the full feature set. With **gcc only** you
+  still get diagnostics + references — completion / goto / type-info are
+  clang-only (gcc has no `-code-completion-at` or JSON `-ast-dump`); see
+  the [gcc-only mode](#gcc-only-mode) section below.
 
 ## Install on a work machine
 
@@ -98,6 +101,34 @@ Should print `compiler=clang`, the resolved flag source (`compile_commands.json`
 
 Should print `omnifunc=fakeide#complete#omni`. If it shows `ccomplete#Complete`,
 the `runtimepath+=...after` line is missing or wrong.
+
+## gcc-only mode
+
+If your machine doesn't have clang, fake-ide detects that automatically and
+degrades gracefully. The probe runs once per session — it reads
+`<compiler> --version` and looks for the word `clang` in the output (Apple's
+`gcc` is actually clang, GNU's isn't).
+
+| Feature | clang | gcc-only |
+|---|---|---|
+| Diagnostics (`:w` + idle) | ✅ | ✅ |
+| References (`gr`) | ✅ | ✅ |
+| Go-to-definition (`<C-]>` / `gd`) | ✅ AST-precise | ⚠️ vimgrep fallback → quickfix |
+| Completion (`<C-x><C-o>`) | ✅ | ❌ silent no-op + one-shot warning |
+| Type info (`K`) | ✅ | ❌ warning + bail |
+
+Set `let g:fakeide_compiler = 'gcc'` in your `~/.vimrc` to point diagnostics
+at gcc (otherwise the default `clang` will fail-to-find on a machine without
+it). To force the gcc-only path for testing even when clang IS installed:
+`let g:fakeide_has_clang = 0`.
+
+`:FakeIdeStatus` shows whether clang features are active and what's been
+disabled.
+
+The fix for the missing 60% is to install clang from your distro's package
+repo (`apt install clang`, `yum install clang`, `xcode-select --install` on
+macOS) — it's a system toolchain package, not "third party" per
+[`docs/INSTRUCTIONS.md`](docs/INSTRUCTIONS.md) §2.
 
 ## Telling fake-ide where your headers are
 

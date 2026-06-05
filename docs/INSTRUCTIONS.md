@@ -42,8 +42,14 @@ See **`docs/DESIGN.md`** for the full architecture, build plan, and rationale.
    hand-written C/C++ parser. Use:
    - `clang ... -Xclang -code-completion-at=-:LINE:COL -` for completion.
    - `clang`/`gcc -fsyntax-only` for diagnostics.
-4. **Completion requires clang** (`gcc` has no `-code-completion-at`). Diagnostics
-   may use either; default to clang.
+4. **Completion + goto-AST + type-info require clang.** gcc has neither
+   `-code-completion-at` nor JSON `-ast-dump`. Diagnostics and references
+   work with either compiler. fake-ide detects this at runtime via
+   `fakeide#has_clang()` (probes `<compiler> --version` for the literal
+   "clang" — Apple's gcc is actually clang, GNU's isn't) and disables the
+   clang-only features with one-shot warnings; goto degrades to the
+   vimgrep fallback. Override with `g:fakeide_has_clang = 0/1`. The
+   README's "gcc-only mode" section has the user-facing feature matrix.
 5. **No background daemon/server.** Spawn short-lived compiler processes only.
 
 ## 3. Code conventions
