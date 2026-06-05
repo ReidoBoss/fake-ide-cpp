@@ -33,24 +33,6 @@ function! s:enabled() abort
   return get(g:, 'fakeide_refs_enabled', 1)
 endfunction
 
-" Reuse goto.vim's project-root heuristic semantics (compile_commands.json /
-" .fakeide / .git markers, falling back to the buffer's directory). Kept local
-" so refs.vim doesn't reach into goto.vim's script scope.
-function! s:project_root(from_file) abort
-  let l:dir = fnamemodify(a:from_file, ':h')
-  while !empty(l:dir)
-    for l:marker in ['compile_commands.json', '.fakeide', '.git']
-      if filereadable(l:dir . '/' . l:marker) || isdirectory(l:dir . '/' . l:marker)
-        return l:dir
-      endif
-    endfor
-    let l:parent = fnamemodify(l:dir, ':h')
-    if l:parent ==# l:dir | break | endif
-    let l:dir = l:parent
-  endwhile
-  return ''
-endfunction
-
 function! fakeide#refs#find() abort
   if !s:enabled()
     return
@@ -61,17 +43,10 @@ function! fakeide#refs#find() abort
     return
   endif
 
-  let l:from = fnamemodify(bufname('%'), ':p')
-  let l:root = s:project_root(l:from)
-  if empty(l:root) | let l:root = fnamemodify(l:from, ':h') | endif
-
-  " Same extension list as goto.vim's fallback so the two stay consistent.
-  let l:exts = get(g:, 'fakeide_goto_grep_exts',
-        \ ['c', 'h', 'cc', 'hh', 'cpp', 'hpp', 'cxx', 'hxx'])
-  let l:globs = []
-  for l:e in l:exts
-    call add(l:globs, fnameescape(l:root) . '/**/*.' . l:e)
-  endfor
+  " Shared grep helper — same globs as goto.vim's fallback. Honors
+  " g:fakeide_grep_scope ('samedir' vs 'root') and g:fakeide_goto_grep_exts.
+  let l:from  = fnamemodify(bufname('%'), ':p')
+  let l:globs = fakeide#grep_globs(l:from)
 
   let l:pattern = '\<' . l:sym . '\>'
   try

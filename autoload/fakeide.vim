@@ -43,6 +43,58 @@ function! fakeide#has_clang() abort
   return s:has_clang
 endfunction
 
+" --- shared grep helpers (used by goto.vim + refs.vim so they can't drift) ---
+"
+" Walk up from the source file's directory looking for a project marker
+" (compile_commands.json / .fakeide / .git). Returns the containing dir or ''.
+" The same heuristic flags.vim uses for resolving compile_commands.json, kept
+" here so refs/goto can run independently of any flag resolution call.
+function! fakeide#project_root(from_file) abort
+  let l:dir = fnamemodify(a:from_file, ':h')
+  while !empty(l:dir)
+    for l:marker in ['compile_commands.json', '.fakeide', '.git']
+      if filereadable(l:dir . '/' . l:marker) || isdirectory(l:dir . '/' . l:marker)
+        return l:dir
+      endif
+    endfor
+    let l:parent = fnamemodify(l:dir, ':h')
+    if l:parent ==# l:dir | break | endif
+    let l:dir = l:parent
+  endwhile
+  return ''
+endfunction
+
+" Build the list of `:vimgrep` globs for the gcc/no-clang code paths (goto's
+" smart-jump fallback + refs#find). Honors:
+"   g:fakeide_goto_grep_exts : list of bare extensions, default the full
+"                              C/C++ set.
+"   g:fakeide_grep_scope     : 'root' (default) walks up to a project marker
+"                              and recurses with `**/*.ext`; 'samedir' restricts
+"                              to the buffer's own directory and does NOT
+"                              recurse. Useful for flat layouts where every
+"                              source / header lives in one directory.
+function! fakeide#grep_globs(from_file) abort
+  let l:exts = get(g:, 'fakeide_goto_grep_exts',
+        \ ['c', 'h', 'cc', 'hh', 'cpp', 'hpp', 'cxx', 'hxx'])
+  let l:scope = get(g:, 'fakeide_grep_scope', 'root')
+  if l:scope ==# 'samedir'
+    let l:dir = fnamemodify(a:from_file, ':h')
+    let l:globs = []
+    for l:e in l:exts
+      call add(l:globs, fnameescape(l:dir) . '/*.' . l:e)
+    endfor
+    return l:globs
+  endif
+  " 'root' (default): walk up to a project marker, then recurse.
+  let l:root = fakeide#project_root(a:from_file)
+  if empty(l:root) | let l:root = fnamemodify(a:from_file, ':h') | endif
+  let l:globs = []
+  for l:e in l:exts
+    call add(l:globs, fnameescape(l:root) . '/**/*.' . l:e)
+  endfor
+  return l:globs
+endfunction
+
 function! fakeide#enable() abort
   if get(b:, 'fakeide_active', 0)
     return

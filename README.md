@@ -141,6 +141,28 @@ repo (`apt install clang`, `yum install clang`, `xcode-select --install` on
 macOS) — it's a system toolchain package, not "third party" per
 [`docs/INSTRUCTIONS.md`](docs/INSTRUCTIONS.md) §2.
 
+## Tuning the project grep (gr + goto fallback)
+
+`gr` (references) and the no-clang / fallback path of `<C-]>` (smart-jump
+goto) drive `:vimgrep` over the project. Two knobs control what gets
+scanned — useful if your team has a flat-directory convention or restricts
+itself to a subset of C/C++ extensions.
+
+```vim
+" Where to search.
+"   'root'    (default) walks up to compile_commands.json / .fakeide / .git
+"             and recurses with **/*.<ext>.
+"   'samedir' restricts to the buffer's OWN directory (no subdir recursion).
+let g:fakeide_grep_scope = 'samedir'
+
+" Which file extensions count. Default is the full C/C++ set
+" (c h cc hh cpp hpp cxx hxx). Trim it if you only use a subset.
+let g:fakeide_goto_grep_exts = ['c', 'h', 'cpp']
+```
+
+Both options apply to `gr` and to the gcc-only / no-AST-match path of
+`<C-]>`. The clang AST primary path is unaffected — that doesn't grep.
+
 ## Telling fake-ide where your headers are
 
 fake-ide resolves compile flags per file, in this order

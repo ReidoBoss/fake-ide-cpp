@@ -104,6 +104,40 @@ call Check('gcc-info-no-signature', s:echo !~# 'int\s\+compute_sum',
 " which both compilers support; refs is pure vimgrep). test/diag.vim and
 " test/refs.vim already cover them.
 
+" --- grep scope: 'samedir' restricts the search to the buffer's directory ---
+" The tier3 fixture has everything in one dir (lib.h + main.cpp), so a
+" 'samedir' goto on `compute_sum` should still find lib.h (it's a sibling)
+" but the project-wide vimgrep wouldn't pull in anything from outside.
+let g:fakeide_grep_scope = 'samedir'
+let s:globs = fakeide#grep_globs(s:main)
+let s:dir   = fnamemodify(s:main, ':h')
+let s:samedir_globs_ok = 1
+for s:g in s:globs
+  if stridx(s:g, s:dir . '/*.') != 0
+    let s:samedir_globs_ok = 0 | break
+  endif
+  if stridx(s:g, '**') >= 0
+    let s:samedir_globs_ok = 0 | break
+  endif
+endfor
+call Check('gcc-samedir-globs-shape', s:samedir_globs_ok,
+      \ 'globs=' . string(s:globs))
+
+" Restrict extensions too and confirm the glob list contains exactly those.
+let g:fakeide_goto_grep_exts = ['c', 'h', 'cpp']
+let s:globs2 = fakeide#grep_globs(s:main)
+let s:tails = []
+for s:g in s:globs2
+  call add(s:tails, fnamemodify(s:g, ':e'))
+endfor
+call sort(s:tails)
+call Check('gcc-samedir-exts-filtered',
+      \ s:tails == ['c', 'cpp', 'h'],
+      \ 'exts=' . string(s:tails))
+" Reset for any later code in this test file.
+unlet g:fakeide_grep_scope
+unlet g:fakeide_goto_grep_exts
+
 let s:out = empty($FAKEIDE_SMOKE_OUT) ? '/tmp/fakeide_gcc_only.txt' : $FAKEIDE_SMOKE_OUT
 call writefile(g:R, s:out)
 qa!

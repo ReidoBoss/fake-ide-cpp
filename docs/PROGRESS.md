@@ -5,6 +5,32 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — Configurable grep scope + extension filter
+
+**Why:** user's company convention is a flat layout where all `.c` / `.h` /
+`.cpp` files for a given component live in one directory. The previous
+recursive-from-project-root grep pulled in unrelated files. Two new options
+let users opt into a tighter search.
+
+**Done (verified — 2 new checks PASS in `test/gcc_only.vim`, 8/8 total):**
+- `fakeide#grep_globs(from_file)` and `fakeide#project_root(from_file)` moved
+  into `autoload/fakeide.vim` so goto and refs can't drift apart on what they
+  search. Honors:
+  - `g:fakeide_grep_scope` — `'root'` (default, walk up + recurse) or
+    `'samedir'` (current dir only, no recursion).
+  - `g:fakeide_goto_grep_exts` — list of bare extensions, default the full
+    C/C++ set.
+- `autoload/fakeide/goto.vim` and `autoload/fakeide/refs.vim` now call the
+  shared helper; both had inline copies of `s:project_root` and the
+  extension/glob assembly that have been removed.
+- README has a new "Tuning the project grep" section.
+
+**Defaults unchanged.** Project-wide behaviour is identical for anyone who
+doesn't set the two knobs. Only opt-in users (e.g. the company-convention
+flat-dir layout) see the restriction.
+
+---
+
 ## 2026-06-05 — Smart-jump heuristic in the vimgrep fallback
 
 **Why:** user is on a gcc-only work machine and wanted goto to actually

@@ -227,13 +227,7 @@ endfunction
 " picks the right one. We push to our stack so :FakeIdeBack still works.
 
 function! s:vimgrep_fallback(sym, from) abort
-  let l:root = s:project_root(a:from.file)
-  if empty(l:root) | let l:root = fnamemodify(a:from.file, ':h') | endif
-  let l:exts = get(g:, 'fakeide_goto_grep_exts', ['c','h','cc','hh','cpp','hpp','cxx','hxx'])
-  let l:globs = []
-  for l:e in l:exts
-    call add(l:globs, fnameescape(l:root) . '/**/*.' . l:e)
-  endfor
+  let l:globs = fakeide#grep_globs(a:from.file)
   let l:pattern = '\<' . a:sym . '\>'
   try
     execute 'silent vimgrep /' . l:pattern . '/j ' . join(l:globs, ' ')
@@ -337,21 +331,6 @@ function! s:prefer_source(hits) abort
     endif
   endfor
   return a:hits[0]
-endfunction
-
-function! s:project_root(from_file) abort
-  let l:dir = fnamemodify(a:from_file, ':h')
-  while !empty(l:dir)
-    for l:marker in ['compile_commands.json', '.fakeide', '.git']
-      if filereadable(l:dir . '/' . l:marker) || isdirectory(l:dir . '/' . l:marker)
-        return l:dir
-      endif
-    endfor
-    let l:parent = fnamemodify(l:dir, ':h')
-    if l:parent ==# l:dir | break | endif
-    let l:dir = l:parent
-  endwhile
-  return ''
 endfunction
 
 " --- synchronous wait over the async job wrapper --------------------------
