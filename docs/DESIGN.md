@@ -341,11 +341,34 @@ clang -fsyntax-only -fno-color-diagnostics -fno-caret-diagnostics \
   `CXXMethodDecl`, `VarDecl`, `FieldDecl`, `CXXRecordDecl`, `EnumDecl`,
   `TypedefDecl`, …).
 
-**Fallback — heuristic `vimgrep`:** triggered only when the AST primary returns
-nothing. `vimgrep /\<sym\>/j` across C/C++ source extensions under the project
-root (the nearest dir containing `compile_commands.json` / `.fakeide` / `.git`,
-else the buffer's directory), opens the quickfix list. Dumb but works without
-the TU parsing.
+**Fallback — heuristic `vimgrep`:** triggered when the AST primary returns
+nothing OR when running on a gcc-only toolchain (no `-Xclang -ast-dump=json`).
+`vimgrep /\<sym\>/j` across C/C++ source extensions under the project root
+(the nearest dir containing `compile_commands.json` / `.fakeide` / `.git`,
+else the buffer's directory).
+
+The hits then go through a **smart-jump heuristic** (`s:pick_definition`):
+
+- **Type definition match:** a line of shape `(struct|class|enum|union) NAME`
+  followed by `{`, `:` (base list), or end-of-line. Strongest signal — a type
+  definition is unambiguous.
+- **Function definition match:** `NAME(...)` (paren-balanced, no `;` inside
+  the args) followed by `{` or end-of-line — with optional `const` /
+  `noexcept` / `override` / `final` / trailing-return-type between the
+  closing paren and the brace. Crucially this rejects `NAME(...);` (a
+  declaration only).
+- Within either bucket, prefer a `.cpp` / `.cc` / `.cxx` file over `.h` —
+  definitions usually live in source files; declarations in headers.
+- If exactly one bucket is non-empty and `s:prefer_source` returns a unique
+  hit, **auto-jump** straight there (same UX as the AST path).
+- Otherwise (no def-shaped hits at all, or genuinely ambiguous), open the
+  quickfix list so the user picks.
+
+The heuristic is a poor-man's ctags. False positives are possible (e.g. a
+function-style macro that uses `NAME(args) { … }` shape would be picked),
+but on real C/C++ the vast majority of `<sym>(...) {` lines are genuine
+definitions. The escape hatch is `:cnext` / quickfix browsing if it lands
+on the wrong line.
 
 **Tag-stack:** Vim 8.0.0000 lacks `settagstack()`/`gettagstack()` (introduced in
 8.0.1453). We keep our own script-local stack of `{bufnr, lnum, col, file}`;

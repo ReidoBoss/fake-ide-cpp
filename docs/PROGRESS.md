@@ -5,6 +5,51 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — Smart-jump heuristic in the vimgrep fallback
+
+**Why:** user is on a gcc-only work machine and wanted goto to actually
+*jump*, not just open a quickfix of textual hits. The previous behaviour
+("open qf, you pick") was correct but unsatisfying — for the common case
+of a single obvious function/type definition, we can do better.
+
+**Done (verified — 1 new check PASS in `test/gcc_only.vim`, 6/6 overall):**
+- `autoload/fakeide/goto.vim`:
+  - `s:pick_definition(sym, qf)` scores each vimgrep hit's line text:
+    - **type def** if `(struct|class|enum|union) NAME` followed by
+      `{` / `:` / EOL — strongest signal.
+    - **func def** if `NAME(args) { ... }` or `NAME(args)\n{` — accepts
+      `const` / `noexcept` / `override` / `final` / trailing-return-type
+      modifiers. Rejects `NAME(args);` (declaration only).
+    - everything else (uses, calls, comments) → no candidate.
+  - `s:prefer_source(hits)` picks `.cpp`/`.cc`/`.cxx` over `.h` within a tie.
+  - If a unique best candidate exists, auto-jump (same UX as the AST path).
+    Else fall back to `:copen` as before.
+- Same heuristic applies whether we hit the fallback via no-clang or via
+  the AST primary returning nothing (e.g. symbols outside the TU). Both
+  paths now feel like real goto when a definition exists.
+
+**New test check (`gcc-goto-smart-jumps`):** under `g:fakeide_has_clang=0`,
+cursor on `local_helper` in tier3/main.cpp → smart-jump lands on line 14
+(the `int local_helper(int x) {` definition), no qf opened. The existing
+`gcc-goto-vimgrep-fallback` check confirms the qf fallback still kicks in
+when no definition-shaped line exists (e.g. `compute_sum` has only a
+declaration in lib.h).
+
+**Honest limits:**
+- Function-style macros that match `NAME(args) {` shape will be picked as
+  definitions. Acceptable false positive — rare in practice.
+- Multi-line function definitions where the brace is on the line *after*
+  any modifier are still caught via the `$` (end-of-line) branch of the
+  regex.
+- `s:pick_definition` only looks at line content from the quickfix item's
+  `text` field; it can't see surrounding context.
+
+**Heads-up unchanged:** `test/fixtures/tier1/broken.c` is still
+locally-cleaned per user direction, so `sh test/run.sh` still reports
+`RESULT: FAIL` overall. All new and existing non-tier1 checks PASS.
+
+---
+
 ## 2026-06-05 — gcc-only graceful degradation
 
 **Why:** user's work machine has gcc but not clang. Completion / type info

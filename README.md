@@ -113,7 +113,7 @@ degrades gracefully. The probe runs once per session — it reads
 |---|---|---|
 | Diagnostics (`:w` + idle) | ✅ | ✅ |
 | References (`gr`) | ✅ | ✅ |
-| Go-to-definition (`<C-]>` / `gd`) | ✅ AST-precise | ⚠️ vimgrep fallback → quickfix |
+| Go-to-definition (`<C-]>` / `gd`) | ✅ AST-precise | ⚠️ smart-jump: heuristic vimgrep that auto-jumps to a definition-shaped line (`NAME(...) {` or `struct NAME {…}`) when it can; falls to quickfix only if nothing looks like a definition |
 | Completion (`<C-x><C-o>`) | ✅ | ❌ silent no-op + one-shot warning |
 | Type info (`K`) | ✅ | ❌ warning + bail |
 

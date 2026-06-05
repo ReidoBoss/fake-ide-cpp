@@ -250,9 +250,93 @@ function! s:vimgrep_fallback(sym, from) abort
     echohl WarningMsg | echo 'fake-ide: no matches for ' . a:sym | echohl None
     return
   endif
+
+  " Smart-jump: scan the hits for a line that LOOKS like a definition (type
+  " decl with body, or function with `{`). If we find one, jump straight to it
+  " — same UX as the clang AST path, just an approximation engine. Used by
+  " gcc-only users and by the AST primary's "no match" fallthrough.
+  let l:picked = s:pick_definition(a:sym, l:qf)
+  if !empty(l:picked)
+    call add(s:tagstack, a:from)
+    call s:jump_to({
+          \ 'file': fnamemodify(bufname(l:picked.bufnr), ':p'),
+          \ 'lnum': l:picked.lnum,
+          \ 'col':  l:picked.col,
+          \ })
+    echo printf('fake-ide: jumped to likely definition of %s (heuristic)', a:sym)
+    return
+  endif
+
+  " Ambiguous (no definition-shaped line, or multiple equally good ones in
+  " the same bucket): open quickfix so the user can pick.
   call add(s:tagstack, a:from)
   copen
-  echo 'fake-ide: AST jump unavailable — ' . len(l:qf) . ' grep matches for ' . a:sym
+  echo 'fake-ide: ' . len(l:qf) . ' textual match(es) for ' . a:sym . ' — pick the definition'
+endfunction
+
+" Heuristic: pick the qf hit whose line content most resembles a definition.
+" Returns the picked qf item, or {} if nothing definition-shaped was found.
+"
+" Buckets (strongest first):
+"   type def : `(struct|class|enum|union) NAME` followed by `{` / `:` / EOL
+"   func def : `NAME(...)` (paren-balanced on one line) followed by `{` or EOL
+" Anything else (e.g. `NAME(...);` declaration, `NAME` as call/argument) is
+" treated as a use, not a candidate.
+"
+" Within the strongest non-empty bucket we prefer a source extension over a
+" header (definitions usually live in .cpp/.cc; declarations live in .h).
+" If after that there's still a tie, we return {} so the caller opens
+" quickfix — better than guessing wrong.
+function! s:pick_definition(sym, qf) abort
+  let l:type_defs = []
+  let l:func_defs = []
+  for l:hit in a:qf
+    let l:text = get(l:hit, 'text', '')
+    " Strip a trailing `// ...` comment to avoid false positives inside
+    " comments. We deliberately don't try to handle /* ... */ — vimgrep
+    " gives us the matched line in isolation; multi-line comments would
+    " need cross-line state we don't have here.
+    let l:text = substitute(l:text, '\v\s*//.*$', '', '')
+
+    " Type definition. Require `struct|class|enum|union NAME` followed by
+    " { (body) or : (base list) or end of line (body on next line).
+    " Rejects `struct NAME *p;` (a use as a pointer type).
+    if l:text =~# '\v(^|\s)(struct|class|enum|union)\s+' . a:sym . '>(\s*[:{]|\s*$)'
+      call add(l:type_defs, l:hit)
+      continue
+    endif
+
+    " Function definition: NAME(...) on the line, followed by `{` (one-line
+    " brace) or end-of-line (brace on next line). The `[^;]*` for args
+    " excludes `NAME(...);` (declaration only — has the `;`).
+    " Tolerates `const`, `noexcept`, `override`, `final`, trailing return type.
+    if l:text =~# '\v<' . a:sym . '\s*\([^;{}]*\)\s*((const|noexcept|override|final|->[^{]+)\s*)*(\{|$)'
+      call add(l:func_defs, l:hit)
+      continue
+    endif
+  endfor
+
+  " Prefer type defs over function defs (a struct definition is unambiguous).
+  if !empty(l:type_defs)
+    return s:prefer_source(l:type_defs)
+  endif
+  if !empty(l:func_defs)
+    return s:prefer_source(l:func_defs)
+  endif
+  return {}
+endfunction
+
+" From a list of equally-good hits, prefer the first one in a C/C++ source
+" extension (definitions live there); fall back to the first hit overall.
+function! s:prefer_source(hits) abort
+  let l:src_exts = ['cpp', 'cc', 'cxx', 'c++', 'c', 'm', 'mm']
+  for l:hit in a:hits
+    let l:ext = tolower(fnamemodify(bufname(l:hit.bufnr), ':e'))
+    if index(l:src_exts, l:ext) >= 0
+      return l:hit
+    endif
+  endfor
+  return a:hits[0]
 endfunction
 
 function! s:project_root(from_file) abort

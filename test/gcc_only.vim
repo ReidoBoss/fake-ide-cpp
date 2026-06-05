@@ -43,7 +43,31 @@ let s:start = fakeide#complete#omni(1, '')
 call Check('gcc-complete-cancelled', s:start == -2,
       \ 'findstart=' . s:start)
 
-" --- goto routes to vimgrep fallback (opens qf with textual hits) ---
+" --- goto: smart-jump heuristic finds a function definition ---
+" `local_helper` has a real definition (`int local_helper(int x) {`) in
+" main.cpp; the gcc-only path's vimgrep fallback should auto-jump to it
+" instead of opening a quickfix list.
+call cursor(1, 1)
+call search('return \zslocal_helper', 'W')
+let s:before_buf  = bufnr('%')
+let s:before_line = line('.')
+call fakeide#goto#jump()
+let s:after_qf_open = 0
+for s:w in range(1, winnr('$'))
+  if getwinvar(s:w, '&buftype') ==# 'quickfix' | let s:after_qf_open = 1 | break | endif
+endfor
+call Check('gcc-goto-smart-jumps',
+      \ line('.') == 14 && !s:after_qf_open,
+      \ 'line=' . line('.') . ' qf_open=' . s:after_qf_open)
+if s:after_qf_open | cclose | endif
+
+" --- goto: no definition found → falls back to quickfix list ---
+" `compute_sum` only has a DECLARATION in lib.h (`int compute_sum(...);` —
+" ends in `;`, not `{`). The smart-jump heuristic correctly refuses to pick
+" a declaration as a definition, so we should land in quickfix.
+if fnamemodify(bufname('%'), ':p') !=# s:main
+  execute 'buffer ' . fnameescape(s:main)
+endif
 call cursor(1, 1)
 call search('\<compute_sum\>', 'W')
 call fakeide#goto#jump()
