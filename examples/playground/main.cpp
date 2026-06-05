@@ -39,15 +39,12 @@ int main() {
   Point origin{0.0, 0.0};
   Point target{3.0, 4.0};
   std::cout << "distance: " << origin.dist_to(target) << "\n";
-
   Rectangle r{Point{0.0, 0.0}, Point{10.0, 5.0}};
   std::cout << r.describe() << "\n";
 
   const Point m = midpoint(origin, target);
   std::cout << "midpoint: (" << m.x << ", " << m.y << ")\n";
-
   std::vector<Point> pts{origin, target, m};
   std::cout << "points: " << pts.size() << "\n";
-
   return 0;
 }

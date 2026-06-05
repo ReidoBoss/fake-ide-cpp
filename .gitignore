@@ -1,0 +1,8 @@
+# Vim swap / undo files left by active editing sessions.
+*.swp
+*.swo
+*.swn
+*~
+
+# macOS Finder cruft.
+.DS_Store

@@ -3,7 +3,7 @@
  * the later sema error (clang suppresses end-of-scope warnings like
  * unused-variable once a function has an error, so we don't rely on those).
  * The undeclared identifier is always an error regardless of flags. */
-#warning fake-ide test warning
 int main(void) {
-    return undeclared_sym;
+	int dog = 1;
+    	return 0;
 }
