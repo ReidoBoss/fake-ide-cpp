@@ -227,9 +227,35 @@ endfunction
 " picks the right one. We push to our stack so :FakeIdeBack still works.
 
 function! s:vimgrep_fallback(sym, from) abort
-  " Shared backend: external `grep` (fast) when available, :vimgrep otherwise.
+  " Step 1: targeted definition-shape grep. The regex matches ONLY lines of
+  " shape `(struct|class|enum|union) SYM ...` or `SYM(args) {`, so grep does
+  " the filtering at the source — no per-line scoring needed afterwards.
+  " Vastly more accurate than a broad `\<sym\>` match: we never see use sites,
+  " call sites, or `SYM(args);` declarations.
+  if fakeide#grep_def(a:sym, a:from.file)
+    let l:qf = getqflist()
+    " s:pick_definition still strips `// ...` comments and breaks ties by
+    " preferring source files over headers — a small extra pass on a
+    " pre-filtered list, so cheap.
+    let l:picked = s:pick_definition(a:sym, l:qf)
+    if !empty(l:picked)
+      call add(s:tagstack, a:from)
+      call s:jump_to({
+            \ 'file': fnamemodify(bufname(l:picked.bufnr), ':p'),
+            \ 'lnum': l:picked.lnum,
+            \ 'col':  l:picked.col,
+            \ })
+      echo printf('fake-ide: jumped to likely definition of %s', a:sym)
+      return
+    endif
+  endif
+
+  " Step 2: no definition-shaped line anywhere — fall back to a broad word
+  " match into the quickfix list so the user can pick. This covers
+  " "declaration-only" symbols (e.g. functions declared in lib.h with no .cpp
+  " definition in scope) and symbols that only appear in comments / strings.
   if !fakeide#grep(a:sym, a:from.file)
-    echohl WarningMsg | echo 'fake-ide: no definition or matches for ' . a:sym | echohl None
+    echohl WarningMsg | echo 'fake-ide: no matches for ' . a:sym | echohl None
     return
   endif
   let l:qf = getqflist()
@@ -237,25 +263,6 @@ function! s:vimgrep_fallback(sym, from) abort
     echohl WarningMsg | echo 'fake-ide: no matches for ' . a:sym | echohl None
     return
   endif
-
-  " Smart-jump: scan the hits for a line that LOOKS like a definition (type
-  " decl with body, or function with `{`). If we find one, jump straight to it
-  " — same UX as the clang AST path, just an approximation engine. Used by
-  " gcc-only users and by the AST primary's "no match" fallthrough.
-  let l:picked = s:pick_definition(a:sym, l:qf)
-  if !empty(l:picked)
-    call add(s:tagstack, a:from)
-    call s:jump_to({
-          \ 'file': fnamemodify(bufname(l:picked.bufnr), ':p'),
-          \ 'lnum': l:picked.lnum,
-          \ 'col':  l:picked.col,
-          \ })
-    echo printf('fake-ide: jumped to likely definition of %s (heuristic)', a:sym)
-    return
-  endif
-
-  " Ambiguous (no definition-shaped line, or multiple equally good ones in
-  " the same bucket): open quickfix so the user can pick.
   call add(s:tagstack, a:from)
   copen
   echo 'fake-ide: ' . len(l:qf) . ' textual match(es) for ' . a:sym . ' — pick the definition'

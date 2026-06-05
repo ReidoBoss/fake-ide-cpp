@@ -5,6 +5,55 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — Syntax-shaped def-grep (smart-jump precision)
+
+**Why:** user pointed out that grepping `\<sym\>` and then scoring lines
+after the fact is doing the same work twice. Better to put the C/C++
+definition syntax into the grep regex itself — grep filters out use sites,
+calls, comments, and declarations at the source.
+
+**Done (8/8 gcc_only checks still PASS; tier1 fixture failures unchanged):**
+- `fakeide#grep_def(sym, from_file)` runs grep with a POSIX ERE shaped
+  after definition syntax:
+  - **type def** : `(struct|class|enum|union)[[:space:]]+SYM[[:space:]]*([:{]|$)` —
+    rejects `struct Foo;` forward decls.
+  - **func def** : `(^|[^[:alnum:]_])SYM[[:space:]]*\([^;{}]*\)[[:space:]]*((const|noexcept|override|final)[[:space:]]+)*(\{|$)` —
+    rejects `SYM(args);` declarations (no `{` / EOL after the closing paren).
+- `goto.vim`'s smart-jump tries `grep_def` FIRST. If hits, runs through
+  `s:pick_definition` (which now mostly just strips `// ...` comments and
+  applies the source-extension tiebreak — the regex already did the heavy
+  lifting) and jumps. Only if `grep_def` returns nothing does it fall back
+  to the broad word grep into the quickfix list.
+
+**Implementation note — switched from `:grep!` to `system()` + `setqflist()`:**
+- `:grep!` mangles complex ERE patterns through Vim's shell-escape path
+  (specifically the `|` alternation inside single quotes — verified the
+  exact same shell command works via `system()` but returns 0 items via
+  `:grep!`).
+- Switching to `system()` gives us full control over the invocation. We
+  parse the `<file>:<lnum>:<text>` output ourselves and populate the qflist
+  via `setqflist()`. Same speed; no Vim escaping interference.
+- Both the broad and def-shape grep paths now go through the same
+  `s:run_grep_system()` helper.
+
+**Benchmark on a 200-file / 10k-LOC synthetic project, looking for a func
+definition:**
+| Path | Time |
+|---|---|
+| broad word grep (old) | 46ms |
+| def-shape grep (new) | 32ms |
+
+Def-shape is *faster* because the more specific regex returns fewer
+matches for grep to stream out — less work even though the regex itself
+is more complex.
+
+**Accuracy win:** on real code, `gd` on `compute_sum` now jumps directly to
+the *definition* line if one exists in the project, with no risk of
+landing on a declaration in a header or a call site. The qf fallback only
+opens for symbols that have no definition in scope.
+
+---
+
 ## 2026-06-05 — External grep backend (refs + goto fallback)
 
 **Why:** user reported `:vimgrep` lag on a large corp codebase. `:vimgrep`

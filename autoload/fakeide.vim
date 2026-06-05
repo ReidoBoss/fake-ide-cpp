@@ -116,52 +116,17 @@ function! fakeide#grep(sym, from_file) abort
   return s:grep_vim(a:sym, a:from_file)
 endfunction
 
-" External-grep backend.
+" External-grep backend. Uses system() + setqflist() rather than :grep! to
+" avoid Vim's :grep shell-escape mangling on complex ERE patterns (see
+" s:run_grep_system).
 "   samedir : explicit file list via glob() (no -r recursion).
 "   root    : grep -r with --include filters from a project marker.
 function! s:grep_external(sym, from_file) abort
-  let l:scope = get(g:, 'fakeide_grep_scope', 'root')
-  let l:exts  = get(g:, 'fakeide_goto_grep_exts',
-        \ ['c', 'h', 'cc', 'hh', 'cpp', 'hpp', 'cxx', 'hxx'])
-  let l:saved_prg = &grepprg
-  let l:saved_fmt = &grepformat
-  " `grep -nwIE`: -n line numbers, -w whole-word match (so `foo` doesn't match
-  " `foobar`), -I skip binary files, -E extended regex (cheap, future-proof).
-  let &grepprg    = 'grep -nwIE'
-  let &grepformat = '%f:%l:%m'
-
-  let l:patt = shellescape(a:sym)
-  let l:args = ''
-
-  if l:scope ==# 'samedir'
-    let l:dir = fnamemodify(a:from_file, ':h')
-    let l:files = []
-    for l:e in l:exts
-      call extend(l:files, glob(l:dir . '/*.' . l:e, 1, 1))
-    endfor
-    if empty(l:files)
-      call setqflist([], 'r')
-      let &grepprg = l:saved_prg | let &grepformat = l:saved_fmt
-      return 0
-    endif
-    let l:args = l:patt . ' ' . join(map(copy(l:files), 'shellescape(v:val)'), ' ')
-  else
-    " 'root': walk up to a project marker, recurse with --include filters.
-    let l:root = fakeide#project_root(a:from_file)
-    if empty(l:root) | let l:root = fnamemodify(a:from_file, ':h') | endif
-    let l:includes = ''
-    for l:e in l:exts
-      let l:includes .= ' --include=' . shellescape('*.' . l:e)
-    endfor
-    let l:args = '-r' . l:includes . ' ' . l:patt . ' ' . shellescape(l:root)
-  endif
-
-  try
-    silent! execute 'grep! ' . l:args
-  catch
-  endtry
-  let &grepprg = l:saved_prg | let &grepformat = l:saved_fmt
-  return !empty(getqflist())
+  " Whole-word match enforced with explicit boundary classes (POSIX-portable;
+  " -w would work too but we want behaviour to match the def-shape grep,
+  " which can't use -w because of its multi-part regex).
+  let l:patt = '(^|[^[:alnum:]_])' . a:sym . '([^[:alnum:]_]|$)'
+  return s:run_grep_system(l:patt, a:from_file)
 endfunction
 
 " :vimgrep backend — used when external grep isn't available (no `grep` on
@@ -171,6 +136,121 @@ function! s:grep_vim(sym, from_file) abort
   let l:pattern = '\<' . a:sym . '\>'
   try
     execute 'silent vimgrep /' . l:pattern . '/jg ' . join(l:globs, ' ')
+  catch /^Vim\%((\a\+)\)\=:E480/
+    return 0
+  catch
+    return 0
+  endtry
+  return !empty(getqflist())
+endfunction
+
+" Like fakeide#grep but the pattern is shaped after C/C++ DEFINITION syntax
+" — so grep itself filters out use sites, declarations, comments without `{`,
+" etc. Much more precise than broad `\<sym\>` matching and lets goto skip a
+" post-grep heuristic scoring step.
+"
+" The regex (POSIX ERE; works in both GNU grep and BSD grep on macOS):
+"   type def : `(struct|class|enum|union)\s+SYM` followed by `{`, `:`, or EOL
+"              (rejects `struct Foo;` forward decls — needs body/base/EOL).
+"   func def : `SYM(args) [modifiers]* {` (or `\n{`); the `{` requirement
+"              rejects `SYM(args);` declarations. Modifiers tolerated:
+"              const / noexcept / override / final / trailing-return-type.
+"
+" Returns 1 if hits found.
+function! fakeide#grep_def(sym, from_file) abort
+  if get(g:, 'fakeide_use_external_grep', 1) && executable('grep')
+    return s:grep_external_def(a:sym, a:from_file)
+  endif
+  return s:grep_vim_def(a:sym, a:from_file)
+endfunction
+
+" Build the POSIX ERE pattern shared by both backends (the only difference
+" between the external and Vim versions is the escaping syntax of word
+" boundaries, which we handle inside the per-backend functions).
+function! s:def_ere_pattern(sym) abort
+  let l:type_def = '(struct|class|enum|union)[[:space:]]+' . a:sym
+        \ . '[[:space:]]*([:{]|$)'
+  let l:func_def = '(^|[^[:alnum:]_])' . a:sym
+        \ . '[[:space:]]*\([^;{}]*\)[[:space:]]*'
+        \ . '((const|noexcept|override|final)[[:space:]]+)*(\{|$)'
+  return l:type_def . '|' . l:func_def
+endfunction
+
+function! s:grep_external_def(sym, from_file) abort
+  let l:patt = s:def_ere_pattern(a:sym)
+  return s:run_grep_system(l:patt, a:from_file)
+endfunction
+
+" Run grep via system() + parse output + setqflist(). Used to BOTH avoid Vim's
+" :grep! shell-escape mangling for complex ERE patterns (the `|` alternation
+" inside single quotes survives system() cleanly but is not reliably passed
+" through :grep!) AND keep behaviour identical between the broad and def-shape
+" grep paths.
+function! s:run_grep_system(pattern, from_file) abort
+  let l:scope = get(g:, 'fakeide_grep_scope', 'root')
+  let l:exts  = get(g:, 'fakeide_goto_grep_exts',
+        \ ['c', 'h', 'cc', 'hh', 'cpp', 'hpp', 'cxx', 'hxx'])
+
+  let l:patt_esc = shellescape(a:pattern)
+
+  if l:scope ==# 'samedir'
+    let l:dir = fnamemodify(a:from_file, ':h')
+    let l:files = []
+    for l:e in l:exts
+      call extend(l:files, glob(l:dir . '/*.' . l:e, 1, 1))
+    endfor
+    if empty(l:files)
+      call setqflist([], 'r')
+      return 0
+    endif
+    let l:cmd = 'grep -nIE ' . l:patt_esc . ' '
+          \ . join(map(copy(l:files), 'shellescape(v:val)'), ' ')
+  else
+    let l:root = fakeide#project_root(a:from_file)
+    if empty(l:root) | let l:root = fnamemodify(a:from_file, ':h') | endif
+    let l:includes = ''
+    for l:e in l:exts
+      let l:includes .= ' --include=' . shellescape('*.' . l:e)
+    endfor
+    let l:cmd = 'grep -nIE -r' . l:includes . ' '
+          \ . l:patt_esc . ' ' . shellescape(l:root)
+  endif
+
+  let l:out = system(l:cmd)
+  if v:shell_error != 0 && empty(l:out)
+    " grep exits 1 when no matches — that's not an error for us.
+    call setqflist([], 'r')
+    return 0
+  endif
+
+  let l:items = []
+  for l:line in split(l:out, "\n")
+    " grep -n output: <file>:<lnum>:<text>
+    let l:m = matchlist(l:line, '\v^(.+):(\d+):(.*)$')
+    if empty(l:m) | continue | endif
+    let l:bufnr = bufnr(l:m[1], 1)   " create if not loaded
+    call add(l:items, {
+          \ 'bufnr': l:bufnr,
+          \ 'filename': l:m[1],
+          \ 'lnum':  str2nr(l:m[2]),
+          \ 'col':   1,
+          \ 'text':  l:m[3],
+          \ })
+  endfor
+  call setqflist(l:items, 'r')
+  return !empty(l:items)
+endfunction
+
+function! s:grep_vim_def(sym, from_file) abort
+  let l:globs = fakeide#grep_globs(a:from_file)
+  " Very-magic regex equivalent of s:def_ere_pattern; uses Vim's \< / \> word
+  " boundaries instead of POSIX [[:alnum:]_] tricks.
+  let l:type_def = '<(struct|class|enum|union)\s+' . a:sym . '>\s*([:{]|$)'
+  let l:func_def = '<' . a:sym . '>\s*\([^;{}]*\)\s*'
+        \ . '((const|noexcept|override|final)\s+)*(\{|$)'
+  let l:patt = '\v(' . l:type_def . ')|(' . l:func_def . ')'
+  try
+    execute 'silent vimgrep /' . l:patt . '/jg ' . join(l:globs, ' ')
   catch /^Vim\%((\a\+)\)\=:E480/
     return 0
   catch
