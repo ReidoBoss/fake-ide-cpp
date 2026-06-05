@@ -90,9 +90,15 @@ function! s:run(bufnr) abort
   let l:flags = fakeide#flags#for(l:fname)
   let l:lang  = getbufvar(a:bufnr, '&filetype') ==# 'cpp' ? 'c++' : 'c'
   let l:dir   = fnamemodify(l:fname, ':h')
-  let l:cmd = [l:compiler, '-fsyntax-only', '-fno-color-diagnostics',
-        \ '-fno-caret-diagnostics', '-x', l:lang]
-        \ + l:flags + ['-I' . l:dir, '-']
+  " gcc and clang use different flag names for "no colors" / "no carets".
+  " Without the right names gcc errors out with `unrecognized command-line
+  " option`, the job exits non-zero with nothing on stdout, and the loclist
+  " stays empty. has_clang() picks the right pair.
+  let l:noise_flags = fakeide#has_clang()
+        \ ? ['-fno-color-diagnostics', '-fno-caret-diagnostics']
+        \ : ['-fdiagnostics-color=never', '-fno-diagnostics-show-caret']
+  let l:cmd = [l:compiler, '-fsyntax-only'] + l:noise_flags
+        \ + ['-x', l:lang] + l:flags + ['-I' . l:dir, '-']
   call fakeide#job#run(l:cmd, {
         \ 'tag':     'diag:' . a:bufnr,
         \ 'stdin':   getbufline(a:bufnr, 1, '$'),

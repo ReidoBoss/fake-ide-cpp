@@ -5,6 +5,34 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — diag.vim: gcc-flavored "no noise" flags
+
+**Bug:** diagnostics silently produced an empty loclist when run against
+real GNU gcc. The pipeline was hardcoding clang's flag names
+(`-fno-color-diagnostics`, `-fno-caret-diagnostics`); gcc errors out with
+`unrecognized command-line option`, the job exits non-zero with empty
+stdout, and the parser sees nothing to populate.
+
+Verified on this Mac by installing Homebrew gcc 15.2.0 (real GNU gcc) and
+running fake-ide against it with `g:fakeide_compiler=/opt/homebrew/bin/gcc-15`
+and `g:fakeide_has_clang=0`. Before the fix: 0 loclist items, 3s timeout.
+After: 2 items in 30ms.
+
+**Fix:** `s:run` in `autoload/fakeide/diag.vim` now picks the flag pair by
+compiler via `fakeide#has_clang()`:
+  * clang : `-fno-color-diagnostics -fno-caret-diagnostics`
+  * gcc   : `-fdiagnostics-color=never -fno-diagnostics-show-caret`
+
+The output format itself is compatible — both compilers emit
+`file:line:col: severity: message`, which the existing parser regex
+already handles. Only the noise-suppression flags differ.
+
+Same compiler-dependent flag pair will need to be applied if/when we add
+gcc-driven completion or AST goto, but those paths are clang-only today
+(gcc has no equivalent flags) so they didn't trip this bug.
+
+---
+
 ## 2026-06-05 — Syntax-shaped def-grep (smart-jump precision)
 
 **Why:** user pointed out that grepping `\<sym\>` and then scoring lines
