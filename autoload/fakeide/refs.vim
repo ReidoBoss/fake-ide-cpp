@@ -43,22 +43,14 @@ function! fakeide#refs#find() abort
     return
   endif
 
-  " Shared grep helper — same globs as goto.vim's fallback. Honors
-  " g:fakeide_grep_scope ('samedir' vs 'root') and g:fakeide_goto_grep_exts.
-  let l:from  = fnamemodify(bufname('%'), ':p')
-  let l:globs = fakeide#grep_globs(l:from)
-
-  let l:pattern = '\<' . l:sym . '\>'
-  try
-    execute 'silent vimgrep /' . l:pattern . '/jg ' . join(l:globs, ' ')
-  catch /^Vim\%((\a\+)\)\=:E480/
+  " Shared grep backend — external `grep` by default for speed; falls back to
+  " :vimgrep if grep isn't available. Honors g:fakeide_grep_scope ('samedir' vs
+  " 'root') and g:fakeide_goto_grep_exts.
+  let l:from = fnamemodify(bufname('%'), ':p')
+  if !fakeide#grep(l:sym, l:from)
     echohl WarningMsg | echo 'fake-ide: no references to ' . l:sym | echohl None
     return
-  catch
-    echohl WarningMsg | echo 'fake-ide: refs search failed: ' . v:exception | echohl None
-    return
-  endtry
-
+  endif
   let l:qf = getqflist()
   if empty(l:qf)
     echohl WarningMsg | echo 'fake-ide: no references to ' . l:sym | echohl None

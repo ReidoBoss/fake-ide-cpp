@@ -227,18 +227,11 @@ endfunction
 " picks the right one. We push to our stack so :FakeIdeBack still works.
 
 function! s:vimgrep_fallback(sym, from) abort
-  let l:globs = fakeide#grep_globs(a:from.file)
-  let l:pattern = '\<' . a:sym . '\>'
-  try
-    execute 'silent vimgrep /' . l:pattern . '/j ' . join(l:globs, ' ')
-  catch /^Vim\%((\a\+)\)\=:E480/
-    " No matches.
+  " Shared backend: external `grep` (fast) when available, :vimgrep otherwise.
+  if !fakeide#grep(a:sym, a:from.file)
     echohl WarningMsg | echo 'fake-ide: no definition or matches for ' . a:sym | echohl None
     return
-  catch
-    echohl WarningMsg | echo 'fake-ide: vimgrep fallback failed: ' . v:exception | echohl None
-    return
-  endtry
+  endif
   let l:qf = getqflist()
   if empty(l:qf)
     echohl WarningMsg | echo 'fake-ide: no matches for ' . a:sym | echohl None

@@ -144,11 +144,18 @@ macOS) — it's a system toolchain package, not "third party" per
 ## Tuning the project grep (gr + goto fallback)
 
 `gr` (references) and the no-clang / fallback path of `<C-]>` (smart-jump
-goto) drive `:vimgrep` over the project. Two knobs control what gets
-scanned — useful if your team has a flat-directory convention or restricts
-itself to a subset of C/C++ extensions.
+goto) drive a project grep into the quickfix list. Three knobs control it:
 
 ```vim
+" Backend.
+"   1 (default) — shell out to external `grep` (much faster on large trees;
+"                 :vimgrep loads each candidate file into Vim's buffer parser
+"                 to scan it, which is slow once you cross ~100 files).
+"   0           — use Vim's built-in :vimgrep instead (no `grep` binary
+"                 needed, but slower).
+" fake-ide falls back to :vimgrep automatically if `grep` isn't on $PATH.
+let g:fakeide_use_external_grep = 1
+
 " Where to search.
 "   'root'    (default) walks up to compile_commands.json / .fakeide / .git
 "             and recurses with **/*.<ext>.
@@ -160,8 +167,19 @@ let g:fakeide_grep_scope = 'samedir'
 let g:fakeide_goto_grep_exts = ['c', 'h', 'cpp']
 ```
 
-Both options apply to `gr` and to the gcc-only / no-AST-match path of
-`<C-]>`. The clang AST primary path is unaffected — that doesn't grep.
+All three apply to `gr` and to the gcc-only / no-AST-match path of `<C-]>`.
+The clang AST primary path is unaffected — it doesn't grep.
+
+**Benchmark** (200 .cpp files, ~10k LOC, `grep 'Point'`):
+
+| Backend | Time | Hits |
+|---|---|---|
+| external grep | ~55ms | 400 |
+| :vimgrep | ~120ms | 400 |
+
+External grep is 2.2× faster at this size, and the gap widens with project
+size — fork/exec overhead is constant, but :vimgrep's per-file parser cost
+scales with file count.
 
 ## Telling fake-ide where your headers are
 

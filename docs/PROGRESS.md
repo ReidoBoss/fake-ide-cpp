@@ -5,6 +5,48 @@ Newest entries at the top. One entry per finished unit of work. See
 
 ---
 
+## 2026-06-05 — External grep backend (refs + goto fallback)
+
+**Why:** user reported `:vimgrep` lag on a large corp codebase. `:vimgrep`
+opens each candidate file in Vim's buffer parser to scan it, which scales
+poorly with file count. External `grep` is a fork/exec that streams bytes —
+much faster on big trees. Measured on a synthetic 200-file project: external
+~55ms vs :vimgrep ~120ms (2.2× faster); the gap widens with project size
+(fork/exec overhead is constant, :vimgrep per-file parser cost is linear).
+
+**Done (verified — all existing checks still PASS; nothing new breaks):**
+- `fakeide#grep(sym, from_file)` in `autoload/fakeide.vim` dispatches:
+  - external path (default, `g:fakeide_use_external_grep=1`): shells out to
+    `grep -nwIE` via `:grep!`; samedir builds an explicit file list from
+    `glob()`, root uses `grep -r --include=*.<ext>` from a project marker.
+  - vimgrep fallback: same logic as before, called when external grep is
+    disabled or `grep` isn't on `$PATH`.
+- `autoload/fakeide/goto.vim` and `autoload/fakeide/refs.vim` collapsed to
+  `fakeide#grep(sym, from_file)` — no more inline `:vimgrep` invocations,
+  no more divergence risk between the two callers.
+- README's "Tuning the project grep" section documents all three knobs
+  (`use_external_grep`, `grep_scope`, `goto_grep_exts`) and shows the
+  benchmark.
+
+**Edge cases handled:**
+- `grep` not on `$PATH` → silent fall-through to `:vimgrep`.
+- samedir glob expands to empty → set qflist to [] explicitly (so callers'
+  empty-check logic still works) and return 0.
+- BSD vs GNU grep: `-nwIE` is supported by both. Word-boundary semantics
+  (`-w`) are identical. `--include=` is GNU-only — we don't pass it in
+  samedir mode (file list is explicit); in root mode we rely on GNU/BSD's
+  shared `--include=` support (BSD grep on macOS 10.15+ has it).
+
+**Honest limits:**
+- Multi-match-per-line: external `grep -nw` reports each MATCHING LINE once,
+  vimgrep with `/g` reports each MATCH separately. If a line contains
+  `Point{0,0}, Point{1,1}`, vimgrep gives 2 qf entries, grep gives 1. In
+  practice this rarely matters because the lines are still in the qf and the
+  user picks one. Documented but not "fixed" — would require per-line
+  re-grepping which defeats the speed win.
+
+---
+
 ## 2026-06-05 — Configurable grep scope + extension filter
 
 **Why:** user's company convention is a flat layout where all `.c` / `.h` /

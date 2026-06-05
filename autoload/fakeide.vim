@@ -95,6 +95,90 @@ function! fakeide#grep_globs(from_file) abort
   return l:globs
 endfunction
 
+" Run a project grep for the identifier `sym` and populate the quickfix
+" list. Used by goto's smart-jump vimgrep fallback and by refs#find. Returns
+" 1 if any hits were found, 0 otherwise. The caller inspects getqflist().
+"
+" Strategy:
+"   * If `grep` is on PATH and g:fakeide_use_external_grep is non-zero
+"     (default 1), shell out to `grep -nwIE` via :grep! — much faster than
+"     :vimgrep, which loads each candidate file into Vim's buffer parser to
+"     scan it. The pty/buffer overhead becomes the bottleneck on large trees.
+"   * Otherwise fall back to :vimgrep over the same glob set so behaviour is
+"     identical, just slower.
+"
+" Honors g:fakeide_grep_scope ('root' default | 'samedir') and
+" g:fakeide_goto_grep_exts (default the full C/C++ extension set).
+function! fakeide#grep(sym, from_file) abort
+  if get(g:, 'fakeide_use_external_grep', 1) && executable('grep')
+    return s:grep_external(a:sym, a:from_file)
+  endif
+  return s:grep_vim(a:sym, a:from_file)
+endfunction
+
+" External-grep backend.
+"   samedir : explicit file list via glob() (no -r recursion).
+"   root    : grep -r with --include filters from a project marker.
+function! s:grep_external(sym, from_file) abort
+  let l:scope = get(g:, 'fakeide_grep_scope', 'root')
+  let l:exts  = get(g:, 'fakeide_goto_grep_exts',
+        \ ['c', 'h', 'cc', 'hh', 'cpp', 'hpp', 'cxx', 'hxx'])
+  let l:saved_prg = &grepprg
+  let l:saved_fmt = &grepformat
+  " `grep -nwIE`: -n line numbers, -w whole-word match (so `foo` doesn't match
+  " `foobar`), -I skip binary files, -E extended regex (cheap, future-proof).
+  let &grepprg    = 'grep -nwIE'
+  let &grepformat = '%f:%l:%m'
+
+  let l:patt = shellescape(a:sym)
+  let l:args = ''
+
+  if l:scope ==# 'samedir'
+    let l:dir = fnamemodify(a:from_file, ':h')
+    let l:files = []
+    for l:e in l:exts
+      call extend(l:files, glob(l:dir . '/*.' . l:e, 1, 1))
+    endfor
+    if empty(l:files)
+      call setqflist([], 'r')
+      let &grepprg = l:saved_prg | let &grepformat = l:saved_fmt
+      return 0
+    endif
+    let l:args = l:patt . ' ' . join(map(copy(l:files), 'shellescape(v:val)'), ' ')
+  else
+    " 'root': walk up to a project marker, recurse with --include filters.
+    let l:root = fakeide#project_root(a:from_file)
+    if empty(l:root) | let l:root = fnamemodify(a:from_file, ':h') | endif
+    let l:includes = ''
+    for l:e in l:exts
+      let l:includes .= ' --include=' . shellescape('*.' . l:e)
+    endfor
+    let l:args = '-r' . l:includes . ' ' . l:patt . ' ' . shellescape(l:root)
+  endif
+
+  try
+    silent! execute 'grep! ' . l:args
+  catch
+  endtry
+  let &grepprg = l:saved_prg | let &grepformat = l:saved_fmt
+  return !empty(getqflist())
+endfunction
+
+" :vimgrep backend — used when external grep isn't available (no `grep` on
+" PATH, or user opted out via g:fakeide_use_external_grep=0).
+function! s:grep_vim(sym, from_file) abort
+  let l:globs = fakeide#grep_globs(a:from_file)
+  let l:pattern = '\<' . a:sym . '\>'
+  try
+    execute 'silent vimgrep /' . l:pattern . '/jg ' . join(l:globs, ' ')
+  catch /^Vim\%((\a\+)\)\=:E480/
+    return 0
+  catch
+    return 0
+  endtry
+  return !empty(getqflist())
+endfunction
+
 function! fakeide#enable() abort
   if get(b:, 'fakeide_active', 0)
     return
